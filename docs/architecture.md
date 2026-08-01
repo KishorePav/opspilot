@@ -22,6 +22,20 @@ both candidate sets before ranking. Full-text search and HNSW cosine search each
 produce a bounded list; reciprocal-rank fusion combines their ranks and returns
 the evidence fields without loading the whole corpus into the API process.
 
+Milestone 3 adds one provider-independent investigation loop. The model may
+select only registered read-only tools. The application validates their typed
+arguments, constrains operational queries to the incident service, environment,
+and time window, and adds successful results to an evidence ledger. The model
+can submit a final Pydantic-validated report only after those calls. The
+orchestrator rejects unknown evidence IDs, out-of-scope affected services,
+duplicate calls, and exhausted budgets.
+
+The OpenAI Responses API is one adapter behind the investigation gateway. Each
+turn reconstructs its bounded state from the incident request, evidence ledger,
+and sanitized tool trace. This avoids provider-owned orchestration state and
+keeps deterministic gateways usable in CI, at the cost of repeating context on
+each live turn.
+
 ## Component responsibilities
 
 | Component | Responsibility | Must not do |
@@ -35,6 +49,11 @@ the evidence fields without loading the whole corpus into the API process.
 | API | Validate requests and serialize evidence | Contain ranking logic |
 | PostgreSQL adapter | Persist chunks and execute filtered hybrid queries | Synthesize answers |
 | Migration runner | Apply immutable, checksum-verified schema changes | Modify applied files |
+| Investigator | Enforce tool, scope, evidence, and round budgets | Execute remediation |
+| Model gateway | Choose a read tool or submit a typed report | Execute tools directly |
+| Tool registry | Validate calls and return evidence records | Expose generic shell, SQL, or HTTP |
+| Evidence ledger | Record tool-derived IDs and validate citations | Treat model claims as evidence |
+| Operational adapter | Perform bounded read queries | Expand incident scope or mutate systems |
 
 ## Planned production flow
 
@@ -43,10 +62,12 @@ the evidence fields without loading the whole corpus into the API process.
 3. Embeddings are generated in bounded batches with retries and rate limits.
 4. PostgreSQL stores text, metadata, generated full-text vectors, and embeddings.
 5. Retrieval applies tenant and service filters before ranking.
-6. The investigator receives a bounded evidence bundle with source references.
-7. Evaluation and tracing record retrieval, tool, latency, token, and outcome
+6. The investigator selects typed read-only tools inside bounded budgets.
+7. Successful tool results enter the evidence ledger with stable source IDs.
+8. A structured report is accepted only when every cited ID exists in the ledger.
+9. Evaluation and tracing record retrieval, tool, latency, token, and outcome
    signals.
-8. Any remediation request interrupts execution for human approval.
+10. Any remediation request interrupts execution for human approval.
 
 ## Failure and consistency behavior
 
@@ -60,9 +81,16 @@ the evidence fields without loading the whole corpus into the API process.
 - Applied migration checksums are recorded. Editing a historical migration
   fails closed instead of silently changing the expected schema.
 - A PostgreSQL advisory lock serializes concurrent migration runners.
+- Unknown tools and invalid arguments create sanitized failed trace events.
+- Repeated calls, unknown citations, report scope violations, and exhausted
+  budgets stop the investigation without returning an unsupported diagnosis.
 
 ## Trust boundaries
 
 Runbooks, logs, alerts, and tool outputs are untrusted data. They cannot change
 system instructions or authorize tools. Credentials stay server-side and tools
 receive narrowly scoped identities. Public fixtures are synthetic.
+
+The current operational source is a synthetic JSON fixture. Production log,
+deployment, and metric adapters still require authentication, RBAC or tenant
+enforcement, timeouts, pagination, and provider-specific availability handling.

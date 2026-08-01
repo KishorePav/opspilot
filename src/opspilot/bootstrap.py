@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from opspilot.adapters.openai_investigation import (
+    DisabledInvestigationGateway,
+    OpenAIInvestigationGateway,
+)
 from opspilot.adapters.postgres import PostgresHybridRetriever
 from opspilot.config import Settings
 from opspilot.corpus import load_markdown_documents
+from opspilot.investigation.gateway import InvestigationModelGateway
+from opspilot.investigation.orchestrator import IncidentInvestigator
 from opspilot.retrieval.base import EvidenceRetriever
 from opspilot.retrieval.embedding import (
     EmbeddingProvider,
@@ -10,6 +16,9 @@ from opspilot.retrieval.embedding import (
     OpenAIEmbeddingProvider,
 )
 from opspilot.retrieval.service import HybridRetriever
+from opspilot.tools.base import ReadOnlyTool
+from opspilot.tools.operational import OperationalFixtureStore, build_operational_tools
+from opspilot.tools.retrieval import RunbookSearchTool
 
 
 def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
@@ -39,3 +48,28 @@ def build_retriever(settings: Settings) -> EvidenceRetriever:
         raise RuntimeError(f"no Markdown documents found in {settings.corpus_dir}")
     retriever.index_documents(documents)
     return retriever
+
+
+def build_investigator(
+    settings: Settings,
+    retriever: EvidenceRetriever,
+) -> IncidentInvestigator:
+    if settings.investigation_provider == "openai":
+        gateway: InvestigationModelGateway = OpenAIInvestigationGateway(
+            settings.investigation_model
+        )
+    else:
+        gateway = DisabledInvestigationGateway()
+
+    store = OperationalFixtureStore.from_path(settings.operational_fixture_path)
+    tools: list[ReadOnlyTool] = [
+        RunbookSearchTool(retriever),
+        *build_operational_tools(store),
+    ]
+    return IncidentInvestigator(
+        gateway,
+        tools,
+        max_rounds=settings.investigation_max_rounds,
+        max_tool_calls=settings.investigation_max_tool_calls,
+        max_evidence_items=settings.investigation_max_evidence_items,
+    )

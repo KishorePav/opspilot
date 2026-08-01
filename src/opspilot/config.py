@@ -16,6 +16,12 @@ class Settings:
     database_url: str
     database_pool_min_size: int
     database_pool_max_size: int
+    investigation_provider: str
+    investigation_model: str
+    operational_fixture_path: Path
+    investigation_max_rounds: int
+    investigation_max_tool_calls: int
+    investigation_max_evidence_items: int
 
     def __post_init__(self) -> None:
         if self.retrieval_backend not in {"memory", "postgres"}:
@@ -26,6 +32,16 @@ class Settings:
             raise ValueError("database pool minimum size must be positive")
         if self.database_pool_max_size < self.database_pool_min_size:
             raise ValueError("database pool maximum must be at least its minimum")
+        if self.investigation_provider not in {"disabled", "openai"}:
+            raise ValueError("investigation provider must be 'disabled' or 'openai'")
+        if not self.investigation_model.strip():
+            raise ValueError("investigation model must not be empty")
+        if min(
+            self.investigation_max_rounds,
+            self.investigation_max_tool_calls,
+            self.investigation_max_evidence_items,
+        ) < 1:
+            raise ValueError("investigation budgets must be positive")
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -44,4 +60,23 @@ class Settings:
             ),
             database_pool_min_size=int(os.getenv("OPSPILOT_DATABASE_POOL_MIN_SIZE", "1")),
             database_pool_max_size=int(os.getenv("OPSPILOT_DATABASE_POOL_MAX_SIZE", "8")),
+            investigation_provider=os.getenv(
+                "OPSPILOT_INVESTIGATION_PROVIDER", "disabled"
+            ),
+            investigation_model=os.getenv("OPSPILOT_INVESTIGATION_MODEL", "gpt-5.6"),
+            operational_fixture_path=Path(
+                os.getenv(
+                    "OPSPILOT_OPERATIONAL_FIXTURE",
+                    "fixtures/operations/dataflow-permission-denied.json",
+                )
+            ),
+            investigation_max_rounds=int(
+                os.getenv("OPSPILOT_INVESTIGATION_MAX_ROUNDS", "8")
+            ),
+            investigation_max_tool_calls=int(
+                os.getenv("OPSPILOT_INVESTIGATION_MAX_TOOL_CALLS", "12")
+            ),
+            investigation_max_evidence_items=int(
+                os.getenv("OPSPILOT_INVESTIGATION_MAX_EVIDENCE_ITEMS", "40")
+            ),
         )

@@ -23,3 +23,18 @@ work, not contribution volume.
 Fast implementation is not itself suspicious. The proof is whether the author
 can explain the trade-offs, reproduce the results, diagnose failures, and extend
 the system under interview conditions.
+
+## Milestone 3 acceptance evidence
+
+The single-investigator milestone is accepted only when automated tests prove:
+
+- a model-selected sequence can collect runbook, log, deployment, and metric
+  evidence and return a typed report;
+- every cited ID belongs to the successful-call evidence ledger;
+- invented citations fail closed;
+- service and environment scope cannot expand beyond the incident request;
+- repeated calls and bounded-resource exhaustion cannot loop indefinitely;
+- model-provider credentials are unnecessary for the unit and API test suites.
+
+These tests prove contracts and failure behavior. They do not prove live-model
+diagnostic accuracy, production security, or customer impact.
