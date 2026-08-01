@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from opspilot.adapters.openai_investigation import (
     DisabledInvestigationGateway,
     OpenAIInvestigationGateway,
 )
 from opspilot.adapters.postgres import PostgresHybridRetriever
+from opspilot.adapters.postgres_workflow import PostgresWorkflowStore
+from opspilot.adapters.synthetic_remediation import SyntheticRemediationExecutor
 from opspilot.config import Settings
 from opspilot.corpus import load_markdown_documents
 from opspilot.investigation.gateway import InvestigationModelGateway
@@ -20,6 +24,7 @@ from opspilot.retrieval.service import HybridRetriever
 from opspilot.tools.base import ReadOnlyTool
 from opspilot.tools.operational import OperationalFixtureStore, build_operational_tools
 from opspilot.tools.retrieval import RunbookSearchTool
+from opspilot.workflow.service import RemediationWorkflowService
 
 
 def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
@@ -86,4 +91,21 @@ def build_investigator(
         max_tool_calls=settings.investigation_max_tool_calls,
         max_evidence_items=settings.investigation_max_evidence_items,
         pricing=pricing,
+    )
+
+
+def build_workflow_service(
+    settings: Settings,
+    investigator: IncidentInvestigator,
+) -> RemediationWorkflowService:
+    store = PostgresWorkflowStore(
+        settings.database_url,
+        pool_min_size=settings.database_pool_min_size,
+        pool_max_size=settings.database_pool_max_size,
+    )
+    return RemediationWorkflowService(
+        investigator,
+        store,
+        SyntheticRemediationExecutor(),
+        approval_ttl=timedelta(seconds=settings.approval_ttl_seconds),
     )

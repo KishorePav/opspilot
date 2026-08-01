@@ -30,6 +30,7 @@ class Settings:
     investigation_max_rounds: int
     investigation_max_tool_calls: int
     investigation_max_evidence_items: int
+    approval_ttl_seconds: int
     pricing_version: str | None
     input_usd_per_million: Decimal | None
     cached_input_usd_per_million: Decimal | None
@@ -54,6 +55,8 @@ class Settings:
             self.investigation_max_evidence_items,
         ) < 1:
             raise ValueError("investigation budgets must be positive")
+        if self.approval_ttl_seconds < 1 or self.approval_ttl_seconds > 3_600:
+            raise ValueError("approval TTL must be between 1 and 3600 seconds")
         pricing_values = (
             self.input_usd_per_million,
             self.cached_input_usd_per_million,
@@ -103,6 +106,7 @@ class Settings:
             investigation_max_evidence_items=int(
                 os.getenv("OPSPILOT_INVESTIGATION_MAX_EVIDENCE_ITEMS", "40")
             ),
+            approval_ttl_seconds=int(os.getenv("OPSPILOT_APPROVAL_TTL_SECONDS", "900")),
             pricing_version=os.getenv("OPSPILOT_PRICING_VERSION") or None,
             input_usd_per_million=_optional_decimal(
                 "OPSPILOT_INPUT_USD_PER_MILLION"

@@ -2,7 +2,8 @@
 
 OpsPilot is an evidence-first production incident investigator. It retrieves
 relevant runbooks and operational context, explains why each source matters,
-and will require explicit human approval before any future remediation action.
+and requires explicit human approval before an approved remediation adapter can
+perform an action.
 
 The project is being built as a public reference implementation for senior
 backend, platform, and production-AI engineering. It is not presented as a
@@ -10,7 +11,7 @@ client deployment.
 
 ## Current status
 
-**Milestone 4 — safety and agent evaluation.**
+**Milestone 5 — durable, approval-gated remediation workflow.**
 
 The current slice provides:
 
@@ -38,10 +39,18 @@ The current slice provides:
 - a typed failure taxonomy with retryability and sanitized API details;
 - per-model-call token capture and optional versioned cost estimation;
 - CI regression thresholds and a downloadable JSON evaluation artifact;
+- durable investigation, proposal, decision, execution, and audit records;
+- typed, scope-checked remediation plans that cite collected evidence;
+- side-effect-free dry runs with a canonical SHA-256 plan digest;
+- separate proposal and human-approval actors with expiring decisions;
+- atomic PostgreSQL execution claims and persistent idempotency keys;
+- an append-only, hash-chained audit trail with integrity verification;
+- a bounded synthetic restart executor that cannot reach external systems;
 - unit tests and an offline CI quality gate that does not require an API key.
 
-Durable agent state, approvals, live-model quality baselines, and production
-observability are deliberately separate milestones.
+Authenticated RBAC, a real least-privilege remediation provider, abandoned-claim
+recovery, live-model quality baselines, and production observability are
+deliberately separate from this milestone.
 
 ## Why this project exists
 
@@ -70,7 +79,10 @@ flowchart TD
     H --> I[Bounded investigator]
     K[Read-only operational tools] --> I
     I --> L[Evidence-cited report]
-    I --> J[Human approval - future milestone]
+    L --> M[(Durable workflow state)]
+    M --> J[Human approval]
+    J --> N[Synthetic executor]
+    M --> O[Hash-chained audit]
 ```
 
 The offline test harness and PostgreSQL benchmark use a deterministic hash
@@ -179,6 +191,40 @@ The checked-in operational fixture deliberately contains an instruction-like
 log payload. It remains evidence data: it cannot add tools, change scope, or
 authorize remediation.
 
+## Run the durable approval workflow
+
+The workflow endpoints require PostgreSQL and the versioned migrations:
+
+```bash
+docker compose up -d postgres
+make migrate
+uvicorn opspilot.main:app --reload
+```
+
+The lifecycle is deliberately separate from the direct read-only endpoint:
+
+1. `POST /v1/investigations` runs and persists an investigation.
+2. `POST /v1/investigations/{run_id}/remediation-proposals` validates a typed
+   action against the incident scope and collected evidence, performs a dry
+   run, and returns the immutable plan digest.
+3. `POST /v1/remediation-proposals/{proposal_id}/decisions` accepts or rejects
+   that exact digest. Approval must come from a different human actor and
+   expires after 15 minutes by default.
+4. `POST /v1/remediation-proposals/{proposal_id}/executions` requires an
+   idempotency key. Replaying the same key returns the stored result without
+   invoking the executor again; a conflicting key fails closed.
+5. `GET /v1/investigations/{run_id}/audit-events` returns the verified audit
+   chain.
+
+The checked-in executor records only a simulated `restart_deployment` action in
+the `synthetic` environment. It has no Kubernetes, cloud, shell, generic HTTP,
+or employer-system access. Request actors are structured but not authenticated;
+a production adapter must derive them from server-side identity and RBAC rather
+than trust request JSON.
+
+This pause-before-side-effects boundary follows current OpenAI guidance on
+[guardrails and human review](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals).
+
 ## Run the agent evaluation gate
 
 The agent suite replays six versioned investigation traces through the real
@@ -241,9 +287,11 @@ docs/               Architecture, ADRs, roadmap, and evidence policy
 
 The checked-in corpus is synthetic. Never ingest employer data, credentials,
 private incident records, or customer information into this public project.
-No remediation tool will be enabled without a least-privilege design, audit
-trail, dry-run behavior, and a human approval interruption.
+No real remediation provider is enabled. The synthetic adapter demonstrates
+the least-privilege boundary, dry run, exact-plan approval, idempotent claim,
+and audit trail without reaching an external system.
 
 See [ADR 0003](docs/adr/0003-bounded-single-investigator.md) for the agent-loop
 decision and [ADR 0004](docs/adr/0004-replayable-agent-evaluation.md) for the
-evaluation and regression-gate design.
+evaluation design. See [ADR 0005](docs/adr/0005-digest-bound-human-approval.md)
+for the durable approval and idempotency decision.

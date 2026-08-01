@@ -6,7 +6,7 @@
 | 2. pgvector integration | Migration, filtered hybrid queries, integration tests, latency baseline | Complete |
 | 3. Single investigator agent | Typed read-only tools, structured diagnosis, cited evidence | Complete |
 | 4. Safety and evaluation | Injection tests, trace graders, regression gates, failure taxonomy | Complete |
-| 5. Approval workflow | Durable run state, dry-run remediation, explicit approval, audit record | Planned |
+| 5. Approval workflow | Durable run state, dry-run remediation, explicit approval, audit record | Complete |
 | 6. Production operations | Deployment, OpenTelemetry, dashboards, SLOs, cost/latency reports | Planned |
 
 Milestone status changes only after its acceptance checks are reproducible in CI

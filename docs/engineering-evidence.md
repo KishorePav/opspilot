@@ -56,3 +56,24 @@ The safety-and-evaluation milestone is accepted only when:
 The current six-case replay suite is deterministic and credential-free. Its
 rates are synthetic; it does not prove live-model accuracy or quote current
 provider pricing.
+
+## Milestone 5 acceptance evidence
+
+The durable approval milestone is accepted only when automated tests prove:
+
+- completed and failed investigations can be persisted independently of an API
+  process;
+- a remediation cannot expand service/environment scope or cite evidence that
+  the investigation did not collect;
+- the dry run performs no side effect and the canonical plan has a stable digest;
+- the proposal author cannot approve the same plan and non-human actors cannot
+  supply approval;
+- changed, rejected, unapproved, and expired plans never reach the executor;
+- one persistent idempotency key invokes the executor once across store/process
+  recreation, while a conflicting key fails closed;
+- audit hashes detect modified history and PostgreSQL rejects audit row updates;
+- API errors remain typed and sanitized.
+
+The checked-in executor is intentionally simulated. These checks prove policy,
+state-transition, idempotency, and audit contracts; they do not prove a real
+Kubernetes/cloud integration, authenticated RBAC, or production recovery.
