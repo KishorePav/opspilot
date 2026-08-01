@@ -15,3 +15,9 @@ Every pull request should include:
 
 Use `make check` before requesting review. Never add private operational data or
 credentials to fixtures.
+
+`make eval-live` is intentionally excluded from `make check`. Do not run it for
+a pull request, add a provider key to CI, or publish a live-quality claim unless
+the protected manual workflow produced a commit-linked artifact. The synthetic
+demo must remain a separate allowlisted application with no arbitrary prompt or
+remediation route.

@@ -1,0 +1,60 @@
+name: Controlled live-model evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: OpenAI model or pinned snapshot to evaluate
+        required: true
+        default: gpt-5.6
+        type: string
+      max_cases:
+        description: Number of versioned synthetic cases to run
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opspilot-live-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: live-evaluation
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LIVE_MODEL: ${{ inputs.model }}
+      LIVE_MAX_CASES: ${{ inputs.max_cases }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - name: Require the protected runtime secret
+        run: test -n "${OPENAI_API_KEY}"
+      - name: Run the bounded live evaluation
+        run: >-
+          python scripts/run_live_agent_eval.py
+          --confirm-live-api
+          --model "${LIVE_MODEL}"
+          --max-cases "${LIVE_MAX_CASES}"
+          --timeout-seconds 30
+          --max-output-tokens 4096
+          --reasoning-effort low
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-agent-evaluation
+          path: artifacts/evaluations/live-agent-eval.json
+          if-no-files-found: error

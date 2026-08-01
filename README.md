@@ -11,7 +11,7 @@ client deployment.
 
 ## Current status
 
-**Milestone 6 — authenticated and observable production-operations reference.**
+**Milestone 7 — controlled live evaluation and synthetic public demo.**
 
 The current slice provides:
 
@@ -29,7 +29,7 @@ The current slice provides:
 - bounded runbook, log, deployment, and metric evidence collection;
 - Pydantic-validated diagnoses with ranked hypotheses and cited root causes;
 - evidence-ledger validation that rejects invented citations;
-- scope, duplicate-call, round, tool-call, and evidence budgets;
+- scope, duplicate-call, round, tool-call, evidence, output-token, and total-token budgets;
 - a Responses API adapter with strict function schemas;
 - versioned agent cases that replay successful and fail-closed investigations;
 - deterministic trace graders for outcome, tools, evidence, citations, safety,
@@ -57,12 +57,19 @@ The current slice provides:
   dashboard;
 - a non-root, read-only container and Restricted-profile Kubernetes reference;
 - CI validation for deployment invariants and a container liveness smoke test;
+- an opt-in live-model evaluation command and manual protected workflow;
+- two versioned live synthetic cases with model, trace, citation, latency, and
+  actual-token artifacts;
+- a separate allowlisted synthetic demo app with no arbitrary prompt,
+  credential, database, model, or remediation surface;
+- a dedicated demo container target validated through hosted smoke tests;
 - unit tests and an offline CI quality gate that does not require an API key.
 
 A real least-privilege remediation provider, production identity-provider
-configuration, live-model quality baselines, workload-specific egress policy,
-and a measured production SLO history remain deliberately outside the claims of
-this public reference implementation.
+configuration, a recorded live-model baseline, workload-specific egress policy,
+and measured production SLO history remain deliberately outside the claims of
+this public reference implementation. The live harness exists, but no result is
+claimed until its protected workflow has run and published an artifact.
 
 ## Why this project exists
 
@@ -190,6 +197,9 @@ provider and model in the server environment, then start the API:
 ```bash
 export OPSPILOT_INVESTIGATION_PROVIDER=openai
 export OPSPILOT_INVESTIGATION_MODEL=gpt-5.6
+export OPSPILOT_INVESTIGATION_REASONING_EFFORT=low
+export OPSPILOT_INVESTIGATION_MAX_OUTPUT_TOKENS=4096
+export OPSPILOT_INVESTIGATION_MAX_TOTAL_TOKENS=20000
 uvicorn opspilot.main:app --reload
 ```
 
@@ -213,6 +223,46 @@ curl -s http://127.0.0.1:8000/v1/investigate \
 The checked-in operational fixture deliberately contains an instruction-like
 log payload. It remains evidence data: it cannot add tools, change scope, or
 authorize remediation.
+
+## Run the controlled live-model evaluation
+
+Live evaluation is never part of `make check`, pull-request CI, or a normal
+server startup. It requires an explicit acknowledgement and reads the API key
+only from the process environment:
+
+```bash
+export OPENAI_API_KEY='set-outside-the-repository'
+python scripts/run_live_agent_eval.py \
+  --confirm-live-api \
+  --model gpt-5.6 \
+  --max-cases 1
+```
+
+The default run is capped at one versioned synthetic case, six model rounds,
+eight read-only tool calls, 12,000 total tokens, 4,096 output tokens per call,
+a 30-second provider timeout, and zero SDK retries. It writes
+`artifacts/evaluations/live-agent-eval.json` with the dataset digest, requested
+and observed models, latency, tool trace, citations, actual token usage, and
+grades. Cost remains `null` unless all three rates and a price-card version are
+supplied explicitly; OpsPilot never guesses current pricing.
+
+The GitHub workflow `Controlled live-model evaluation` exposes the same command
+only through `workflow_dispatch` and the `live-evaluation` environment. See the
+[live evaluation contract](docs/live-evaluation.md).
+
+## Run the credential-free demo
+
+The demo is a separate FastAPI application, not an unauthenticated mode of the
+production API. It accepts one allowlisted scenario ID and deterministically
+replays the real bounded investigator over synthetic fixtures:
+
+```bash
+uvicorn opspilot.demo:app --host 127.0.0.1 --port 8081
+```
+
+Open `http://127.0.0.1:8081`. The UI shows the incident, tool trace, collected
+evidence, cited root cause, and active controls. It exposes no free-text prompt,
+workflow state, approval, execution, database, model, or credential endpoint.
 
 ## Run the durable approval workflow
 
@@ -250,9 +300,13 @@ human/service type, tenant, and roles are derived from the verified token.
 Build and smoke-test the image locally:
 
 ```bash
-docker build -t opspilot:0.6.0 .
-docker run --rm -p 8080:8080 opspilot:0.6.0
+docker build -t opspilot:0.7.0 .
+docker run --rm -p 8080:8080 opspilot:0.7.0
 curl --fail http://127.0.0.1:8080/livez
+
+docker build --target demo -t opspilot-demo:0.7.0 .
+docker run --rm -p 8081:8080 opspilot-demo:0.7.0
+curl --fail http://127.0.0.1:8081/api/scenarios
 ```
 
 The Kubernetes base expects an externally managed `opspilot-runtime` Secret
@@ -324,13 +378,13 @@ and [the evidence policy](docs/engineering-evidence.md).
 ## Repository map
 
 ```text
-src/opspilot/       Retrieval, typed tools, investigator, adapters, and API
+src/opspilot/       Retrieval, tools, investigator, API, adapters, and demo
 tests/              Deterministic unit and acceptance tests
 fixtures/runbooks/  Synthetic operational runbooks used by the demo
 fixtures/operations Synthetic logs, deployments, and metrics used by the agent
 evals/              Versioned retrieval and agent datasets plus thresholds
 migrations/         PostgreSQL and pgvector schema
-deploy/             Hardened Kubernetes, collector, alerts, and dashboard
+deploy/             Kubernetes, demo deployment guidance, alerts, and dashboard
 docs/               Architecture, ADRs, roadmap, and evidence policy
 ```
 
@@ -347,4 +401,6 @@ decision and [ADR 0004](docs/adr/0004-replayable-agent-evaluation.md) for the
 evaluation design. See [ADR 0005](docs/adr/0005-digest-bound-human-approval.md)
 for the durable approval and idempotency decision and
 [ADR 0006](docs/adr/0006-authenticated-fenced-production-operations.md) for
-identity, tenancy, leases, and telemetry.
+identity, tenancy, leases, and telemetry. See
+[ADR 0007](docs/adr/0007-controlled-live-evaluation-and-demo.md) for the
+credential and public-demo separation.

@@ -81,6 +81,22 @@ telemetry interface. A validated container and Kubernetes base add probes,
 non-root execution, a read-only filesystem, dropped capabilities, resource
 bounds, disruption protection, scaling, and network-policy scaffolding.
 
+Milestone 7 separates model measurement from public demonstration. The live
+evaluator invokes the existing OpenAI gateway only after an explicit CLI
+confirmation and runtime credential check. Versioned synthetic inputs pass
+through the same investigator and deterministic graders, with per-call output
+limits, provider timeout, no SDK retries, and a cumulative token fence. Its
+artifact identifies the exact dataset bytes and observed provider model; cost
+is unknown unless a complete versioned price policy is supplied.
+
+The public demo is a different FastAPI application and container target. It
+loads one allowlisted replay case and invokes the real investigator, retrieval,
+tools, evidence ledger, and citation validation. It does not import a live
+gateway into its request path and exposes no arbitrary incident input,
+authentication bypass for `/v1`, workflow store, or executor. This makes the
+demo useful for inspection without turning a portfolio URL into a funded model
+proxy or side-effect surface.
+
 ## Component responsibilities
 
 | Component | Responsibility | Must not do |
@@ -111,6 +127,8 @@ bounds, disruption protection, scaling, and network-policy scaffolding.
 | Tenant guard | Hide cross-tenant runs and proposals | Use retrieval metadata as authorization |
 | Execution lease | Recover abandoned work with an incremented fence | Permit a stale worker to commit |
 | Telemetry boundary | Emit bounded operational signals | Export content, identity, prompts, tokens, or credentials |
+| Live evaluator | Measure selected versioned cases with explicit runtime consent and budgets | Run in ordinary CI or infer provider pricing |
+| Synthetic demo | Replay one allowlisted case through real safety contracts | Accept arbitrary prompts, call a model, or expose remediation |
 
 ## Production reference flow
 

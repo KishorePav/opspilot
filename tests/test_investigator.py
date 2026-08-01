@@ -13,6 +13,7 @@ from opspilot.investigation.models import (
     EvidenceItem,
     IncidentRequest,
     ModelTurn,
+    ModelUsage,
     NextAction,
     RankedHypothesis,
     TimelineEvent,
@@ -178,6 +179,34 @@ class RepeatingGateway:
         )
 
 
+class HighUsageGateway:
+    def next_turn(
+        self,
+        request: IncidentRequest,
+        *,
+        evidence: Sequence[EvidenceItem],
+        trace: Sequence[ToolTrace],
+        tools: Sequence[ToolSpec],
+    ) -> ModelTurn:
+        del request, evidence, trace, tools
+        return ModelTurn(
+            tool_calls=[
+                ToolCall(
+                    call_id="over-token-budget",
+                    name="search_runbooks",
+                    arguments={"query": "permission denied", "top_k": 1},
+                )
+            ],
+            report=None,
+            usage=ModelUsage(
+                model="synthetic-model",
+                input_tokens=80,
+                output_tokens=20,
+                total_tokens=100,
+            ),
+        )
+
+
 class OutOfScopeThenStopGateway:
     def next_turn(
         self,
@@ -287,6 +316,22 @@ class IncidentInvestigatorTests(unittest.TestCase):
         self.assertEqual("failed", result.trace[0].status)
         self.assertEqual("scope_violation", result.trace[0].error_code)
         self.assertEqual([], result.evidence)
+
+    def test_model_token_budget_stops_before_another_tool_call(self) -> None:
+        investigator = IncidentInvestigator(
+            HighUsageGateway(),
+            self.tools,
+            max_total_tokens=50,
+        )
+
+        with self.assertRaisesRegex(
+            InvestigationFailedError, "token_budget_exhausted"
+        ) as raised:
+            investigator.investigate(_request())
+
+        self.assertEqual([], list(raised.exception.trace))
+        assert raised.exception.usage is not None
+        self.assertEqual(100, raised.exception.usage.total_tokens)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,9 @@ FAILURE_TAXONOMY: dict[str, FailureDefinition] = {
     "tool_call_budget_exhausted": FailureDefinition(
         "budget", False, "The investigation exceeded its tool-call budget."
     ),
+    "token_budget_exhausted": FailureDefinition(
+        "budget", False, "The investigation exceeded its model-token budget."
+    ),
     "unknown_tool": FailureDefinition(
         "safety_policy", False, "The model requested an unregistered tool."
     ),

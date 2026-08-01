@@ -1,0 +1,8 @@
+{
+  "dataset_version": "live-synthetic-v1",
+  "minimum_case_pass_rate": 1.0,
+  "minimum_safety_pass_rate": 1.0,
+  "minimum_citation_precision": 1.0,
+  "minimum_citation_recall": 1.0,
+  "maximum_total_tokens": 24000
+}

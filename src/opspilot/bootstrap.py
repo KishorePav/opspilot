@@ -64,7 +64,10 @@ def build_investigator(
 ) -> IncidentInvestigator:
     if settings.investigation_provider == "openai":
         gateway: InvestigationModelGateway = OpenAIInvestigationGateway(
-            settings.investigation_model
+            settings.investigation_model,
+            timeout_seconds=settings.investigation_timeout_seconds,
+            max_output_tokens=settings.investigation_max_output_tokens,
+            reasoning_effort=settings.investigation_reasoning_effort,
         )
     else:
         gateway = DisabledInvestigationGateway()
@@ -92,6 +95,7 @@ def build_investigator(
         max_rounds=settings.investigation_max_rounds,
         max_tool_calls=settings.investigation_max_tool_calls,
         max_evidence_items=settings.investigation_max_evidence_items,
+        max_total_tokens=settings.investigation_max_total_tokens,
         pricing=pricing,
     )
 
@@ -131,6 +135,6 @@ def build_telemetry(settings: Settings) -> Observability:
     return build_observability(
         exporter=settings.telemetry_exporter,
         endpoint=settings.otlp_endpoint,
-        service_version="0.6.0",
+        service_version="0.7.0",
         environment=settings.environment,
     )

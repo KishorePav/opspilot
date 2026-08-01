@@ -8,7 +8,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip install --prefix=/install .
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim AS runtime-base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -19,6 +19,7 @@ COPY --from=builder /install /usr/local
 COPY migrations ./migrations
 COPY scripts/migrate.py ./scripts/migrate.py
 COPY fixtures ./fixtures
+COPY evals ./evals
 
 RUN groupadd --gid 65532 opspilot \
     && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin opspilot
@@ -26,4 +27,8 @@ RUN groupadd --gid 65532 opspilot \
 USER 65532:65532
 EXPOSE 8080
 
+FROM runtime-base AS demo
+CMD ["python", "-m", "uvicorn", "opspilot.demo:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+
+FROM runtime-base AS api
 CMD ["python", "-m", "uvicorn", "opspilot.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]

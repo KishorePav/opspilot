@@ -29,9 +29,15 @@ class IncidentInvestigator:
         max_rounds: int = 8,
         max_tool_calls: int = 12,
         max_evidence_items: int = 40,
+        max_total_tokens: int = 20_000,
         pricing: PricingPolicy | None = None,
     ) -> None:
-        if max_rounds < 1 or max_tool_calls < 1 or max_evidence_items < 1:
+        if (
+            max_rounds < 1
+            or max_tool_calls < 1
+            or max_evidence_items < 1
+            or max_total_tokens < 1
+        ):
             raise ValueError("investigation budgets must be positive")
         names = [tool.spec.name for tool in tools]
         if len(names) != len(set(names)):
@@ -41,6 +47,7 @@ class IncidentInvestigator:
         self._max_rounds = max_rounds
         self._max_tool_calls = max_tool_calls
         self._max_evidence_items = max_evidence_items
+        self._max_total_tokens = max_total_tokens
         self._pricing = pricing
 
     def investigate(self, request: IncidentRequest) -> InvestigationResult:
@@ -65,6 +72,8 @@ class IncidentInvestigator:
                     raise InvestigationFailedError("model_gateway_failed") from exc
                 if turn.usage is not None:
                     usage_records.append(turn.usage)
+                    if sum(item.total_tokens for item in usage_records) > self._max_total_tokens:
+                        raise InvestigationFailedError("token_budget_exhausted")
 
                 if turn.report is not None:
                     self._validate_report(request, turn.report, ledger)

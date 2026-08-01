@@ -56,6 +56,21 @@ class SettingsTests(unittest.TestCase):
         ), self.assertRaisesRegex(ValueError, "configured together"):
             Settings.from_environment()
 
+    def test_live_model_limits_are_bounded(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPSPILOT_INVESTIGATION_MAX_OUTPUT_TOKENS": "128"},
+            clear=True,
+        ), self.assertRaisesRegex(ValueError, "output budget"):
+            Settings.from_environment()
+
+        with patch.dict(
+            os.environ,
+            {"OPSPILOT_INVESTIGATION_REASONING_EFFORT": "unbounded"},
+            clear=True,
+        ), self.assertRaisesRegex(ValueError, "reasoning effort"):
+            Settings.from_environment()
+
 
 if __name__ == "__main__":
     unittest.main()
