@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from opspilot.domain.models import Document
+from opspilot.investigation.failures import InvestigationFailedError
 from opspilot.investigation.models import (
     CitedClaim,
     DiagnosisReport,
@@ -18,10 +19,7 @@ from opspilot.investigation.models import (
     ToolCall,
     ToolTrace,
 )
-from opspilot.investigation.orchestrator import (
-    IncidentInvestigator,
-    InvestigationFailedError,
-)
+from opspilot.investigation.orchestrator import IncidentInvestigator
 from opspilot.retrieval.embedding import HashEmbeddingProvider
 from opspilot.retrieval.service import HybridRetriever
 from opspilot.tools.base import ReadOnlyTool, ToolSpec
@@ -269,8 +267,16 @@ class IncidentInvestigatorTests(unittest.TestCase):
 
     def test_duplicate_tool_call_fails_closed(self) -> None:
         investigator = IncidentInvestigator(RepeatingGateway(), self.tools)
-        with self.assertRaisesRegex(InvestigationFailedError, "duplicate_tool_call"):
+        with self.assertRaisesRegex(
+            InvestigationFailedError, "duplicate_tool_call"
+        ) as raised:
             investigator.investigate(_request())
+
+        self.assertEqual("safety_policy", raised.exception.category)
+        self.assertEqual(1, len(raised.exception.trace))
+        self.assertIsNotNone(raised.exception.usage)
+        assert raised.exception.usage is not None
+        self.assertEqual(2, raised.exception.usage.model_calls)
 
     def test_out_of_scope_call_is_not_executed(self) -> None:
         result = IncidentInvestigator(OutOfScopeThenStopGateway(), self.tools).investigate(

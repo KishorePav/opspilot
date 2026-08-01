@@ -9,6 +9,7 @@ from opspilot.config import Settings
 from opspilot.corpus import load_markdown_documents
 from opspilot.investigation.gateway import InvestigationModelGateway
 from opspilot.investigation.orchestrator import IncidentInvestigator
+from opspilot.investigation.usage import PricingPolicy
 from opspilot.retrieval.base import EvidenceRetriever
 from opspilot.retrieval.embedding import (
     EmbeddingProvider,
@@ -66,10 +67,23 @@ def build_investigator(
         RunbookSearchTool(retriever),
         *build_operational_tools(store),
     ]
+    pricing = None
+    if settings.input_usd_per_million is not None:
+        assert settings.cached_input_usd_per_million is not None
+        assert settings.output_usd_per_million is not None
+        assert settings.pricing_version is not None
+        pricing = PricingPolicy(
+            model=settings.investigation_model,
+            version=settings.pricing_version,
+            input_usd_per_million=settings.input_usd_per_million,
+            cached_input_usd_per_million=settings.cached_input_usd_per_million,
+            output_usd_per_million=settings.output_usd_per_million,
+        )
     return IncidentInvestigator(
         gateway,
         tools,
         max_rounds=settings.investigation_max_rounds,
         max_tool_calls=settings.investigation_max_tool_calls,
         max_evidence_items=settings.investigation_max_evidence_items,
+        pricing=pricing,
     )

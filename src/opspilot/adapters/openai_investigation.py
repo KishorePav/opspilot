@@ -15,6 +15,7 @@ from opspilot.investigation.models import (
     EvidenceItem,
     IncidentRequest,
     ModelTurn,
+    ModelUsage,
     ToolCall,
     ToolTrace,
 )
@@ -122,7 +123,9 @@ class OpenAIInvestigationGateway(InvestigationModelGateway):
 
         if getattr(response, "status", None) != "completed":
             raise ModelGatewayError("OpenAI response did not complete")
-        return self._parse_response(response)
+        turn = self._parse_response(response)
+        usage = self._parse_usage(response, fallback_model=self._model)
+        return turn.model_copy(update={"usage": usage})
 
     def _get_client(self) -> object:
         if self._client is None:
@@ -183,3 +186,45 @@ class OpenAIInvestigationGateway(InvestigationModelGateway):
             return ModelTurn(tool_calls=calls, report=report)
         except ValueError as exc:
             raise ModelGatewayError("OpenAI returned no actionable function call") from exc
+
+    @staticmethod
+    def _parse_usage(response: object, *, fallback_model: str) -> ModelUsage | None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+
+        def read_int(parent: object, name: str) -> int:
+            value = (
+                parent.get(name, 0)
+                if isinstance(parent, Mapping)
+                else getattr(parent, name, 0)
+            )
+            return value if isinstance(value, int) and value >= 0 else 0
+
+        input_tokens = read_int(usage, "input_tokens")
+        output_tokens = read_int(usage, "output_tokens")
+        total_tokens = read_int(usage, "total_tokens") or input_tokens + output_tokens
+        input_details = (
+            usage.get("input_tokens_details")
+            if isinstance(usage, Mapping)
+            else getattr(usage, "input_tokens_details", None)
+        )
+        output_details = (
+            usage.get("output_tokens_details")
+            if isinstance(usage, Mapping)
+            else getattr(usage, "output_tokens_details", None)
+        )
+        model = getattr(response, "model", fallback_model)
+        if not isinstance(model, str) or not model.strip():
+            model = fallback_model
+        try:
+            return ModelUsage(
+                model=model,
+                input_tokens=input_tokens,
+                cached_input_tokens=read_int(input_details, "cached_tokens"),
+                output_tokens=output_tokens,
+                reasoning_tokens=read_int(output_details, "reasoning_tokens"),
+                total_tokens=total_tokens,
+            )
+        except ValueError as exc:
+            raise ModelGatewayError("OpenAI returned invalid usage accounting") from exc

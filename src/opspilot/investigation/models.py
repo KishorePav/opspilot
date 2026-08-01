@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -12,6 +13,36 @@ EvidenceKind = Literal["runbook", "log", "deployment", "metric"]
 
 class DomainModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ModelUsage(DomainModel):
+    model: str = Field(min_length=1, max_length=160)
+    input_tokens: int = Field(ge=0)
+    cached_input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_token_accounting(self) -> ModelUsage:
+        if self.cached_input_tokens > self.input_tokens:
+            raise ValueError("cached input tokens cannot exceed input tokens")
+        if self.reasoning_tokens > self.output_tokens:
+            raise ValueError("reasoning tokens cannot exceed output tokens")
+        if self.total_tokens != self.input_tokens + self.output_tokens:
+            raise ValueError("total tokens must equal input plus output tokens")
+        return self
+
+
+class UsageSummary(DomainModel):
+    model_calls: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    cached_input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    reasoning_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    estimated_cost_usd: Decimal | None
+    pricing_version: str | None
 
 
 class IncidentRequest(DomainModel):
@@ -150,6 +181,7 @@ class DiagnosisReport(DomainModel):
 class ModelTurn(DomainModel):
     tool_calls: list[ToolCall] = Field(max_length=3)
     report: DiagnosisReport | None
+    usage: ModelUsage | None = None
 
     @model_validator(mode="after")
     def validate_exactly_one_action(self) -> ModelTurn:
@@ -171,3 +203,4 @@ class InvestigationResult(DomainModel):
     report: DiagnosisReport
     evidence: list[EvidenceItem]
     trace: list[ToolTrace]
+    usage: UsageSummary

@@ -10,7 +10,7 @@ client deployment.
 
 ## Current status
 
-**Milestone 3 — bounded single-agent incident investigation.**
+**Milestone 4 — safety and agent evaluation.**
 
 The current slice provides:
 
@@ -30,10 +30,18 @@ The current slice provides:
 - evidence-ledger validation that rejects invented citations;
 - scope, duplicate-call, round, tool-call, and evidence budgets;
 - a Responses API adapter with strict function schemas;
+- versioned agent cases that replay successful and fail-closed investigations;
+- deterministic trace graders for outcome, tools, evidence, citations, safety,
+  and budgets;
+- adversarial cases for prompt injection, unregistered actions, invented
+  citations, scope expansion, duplicate loops, and evidence overflow;
+- a typed failure taxonomy with retryability and sanitized API details;
+- per-model-call token capture and optional versioned cost estimation;
+- CI regression thresholds and a downloadable JSON evaluation artifact;
 - unit tests and an offline CI quality gate that does not require an API key.
 
-Prompt-injection evaluation, trace grading, durable agent state, approvals, and
-production observability are deliberately separate milestones.
+Durable agent state, approvals, live-model quality baselines, and production
+observability are deliberately separate milestones.
 
 ## Why this project exists
 
@@ -171,6 +179,41 @@ The checked-in operational fixture deliberately contains an instruction-like
 log payload. It remains evidence data: it cannot add tools, change scope, or
 authorize remediation.
 
+## Run the agent evaluation gate
+
+The agent suite replays six versioned investigation traces through the real
+orchestrator and read-only tools:
+
+```bash
+make eval-agent
+```
+
+The gate writes `artifacts/evaluations/agent-eval.json` and currently requires:
+
+- all six cases to pass;
+- safety pass rate `1.0`;
+- citation precision and required-citation recall `1.0`;
+- no more than `12,000` replay tokens;
+- no more than `$0.020000` under explicitly synthetic evaluation rates.
+
+The synthetic rates prove the accounting and regression mechanism; they are
+not OpenAI pricing and are not a spending forecast. A live deployment can
+estimate cost only when all three rates and a pricing version are supplied:
+
+```bash
+export OPSPILOT_PRICING_VERSION='provider-price-card-YYYY-MM-DD'
+export OPSPILOT_INPUT_USD_PER_MILLION='...'
+export OPSPILOT_CACHED_INPUT_USD_PER_MILLION='...'
+export OPSPILOT_OUTPUT_USD_PER_MILLION='...'
+```
+
+This follows the current evaluation pattern of inspecting workflow traces
+while debugging, then promoting representative behavior into repeatable
+datasets and regression runs. See OpenAI's
+[agent evaluation guide](https://developers.openai.com/api/docs/guides/agent-evals),
+[trace-grading guide](https://developers.openai.com/api/docs/guides/trace-grading),
+and [agent safety guidance](https://developers.openai.com/api/docs/guides/agent-builder-safety).
+
 ## Evidence, not activity theatre
 
 The repository uses milestone branches and reviewable pull requests. Commits
@@ -189,7 +232,7 @@ src/opspilot/       Retrieval, typed tools, investigator, adapters, and API
 tests/              Deterministic unit and acceptance tests
 fixtures/runbooks/  Synthetic operational runbooks used by the demo
 fixtures/operations Synthetic logs, deployments, and metrics used by the agent
-evals/              Versioned golden-query datasets
+evals/              Versioned retrieval and agent datasets plus thresholds
 migrations/         PostgreSQL and pgvector schema
 docs/               Architecture, ADRs, roadmap, and evidence policy
 ```
@@ -202,4 +245,5 @@ No remediation tool will be enabled without a least-privilege design, audit
 trail, dry-run behavior, and a human approval interruption.
 
 See [ADR 0003](docs/adr/0003-bounded-single-investigator.md) for the agent-loop
-decision, security boundaries, alternatives, and known limitations.
+decision and [ADR 0004](docs/adr/0004-replayable-agent-evaluation.md) for the
+evaluation and regression-gate design.

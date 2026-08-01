@@ -4,20 +4,20 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 
+from opspilot.investigation.failures import InvestigationFailedError
 from opspilot.investigation.gateway import InvestigationModelGateway, ModelGatewayError
 from opspilot.investigation.models import (
     DiagnosisReport,
     EvidenceItem,
     IncidentRequest,
     InvestigationResult,
+    ModelUsage,
     ToolCall,
     ToolTrace,
+    UsageSummary,
 )
+from opspilot.investigation.usage import PricingPolicy, summarize_usage
 from opspilot.tools.base import ReadOnlyTool, ToolExecutionError
-
-
-class InvestigationFailedError(RuntimeError):
-    """Raised when an investigation cannot complete inside its safety contract."""
 
 
 class IncidentInvestigator:
@@ -29,6 +29,7 @@ class IncidentInvestigator:
         max_rounds: int = 8,
         max_tool_calls: int = 12,
         max_evidence_items: int = 40,
+        pricing: PricingPolicy | None = None,
     ) -> None:
         if max_rounds < 1 or max_tool_calls < 1 or max_evidence_items < 1:
             raise ValueError("investigation budgets must be positive")
@@ -40,43 +41,88 @@ class IncidentInvestigator:
         self._max_rounds = max_rounds
         self._max_tool_calls = max_tool_calls
         self._max_evidence_items = max_evidence_items
+        self._pricing = pricing
 
     def investigate(self, request: IncidentRequest) -> InvestigationResult:
         ledger: dict[str, EvidenceItem] = {}
         trace: list[ToolTrace] = []
+        usage_records: list[ModelUsage] = []
         seen_calls: set[str] = set()
         total_calls = 0
+        model_calls = 0
 
-        for round_number in range(1, self._max_rounds + 1):
+        try:
+            for round_number in range(1, self._max_rounds + 1):
+                model_calls += 1
+                try:
+                    turn = self._gateway.next_turn(
+                        request,
+                        evidence=tuple(ledger.values()),
+                        trace=tuple(trace),
+                        tools=tuple(tool.spec for tool in self._tools.values()),
+                    )
+                except ModelGatewayError as exc:
+                    raise InvestigationFailedError("model_gateway_failed") from exc
+                if turn.usage is not None:
+                    usage_records.append(turn.usage)
+
+                if turn.report is not None:
+                    self._validate_report(request, turn.report, ledger)
+                    return InvestigationResult(
+                        report=turn.report,
+                        evidence=list(ledger.values()),
+                        trace=trace,
+                        usage=self._summarize_usage(
+                            usage_records,
+                            model_calls=model_calls,
+                        ),
+                    )
+
+                for call in turn.tool_calls:
+                    total_calls += 1
+                    if total_calls > self._max_tool_calls:
+                        raise InvestigationFailedError("tool_call_budget_exhausted")
+                    signature = self._call_signature(call)
+                    if signature in seen_calls:
+                        raise InvestigationFailedError("duplicate_tool_call")
+                    seen_calls.add(signature)
+                    self._execute_call(round_number, call, request, ledger, trace)
+
+            raise InvestigationFailedError("investigation_round_budget_exhausted")
+        except InvestigationFailedError as exc:
             try:
-                turn = self._gateway.next_turn(
-                    request,
-                    evidence=tuple(ledger.values()),
-                    trace=tuple(trace),
-                    tools=tuple(tool.spec for tool in self._tools.values()),
+                failure_usage = summarize_usage(
+                    usage_records,
+                    model_calls=model_calls,
+                    pricing=self._pricing,
                 )
-            except ModelGatewayError as exc:
-                raise InvestigationFailedError("model_gateway_failed") from exc
-
-            if turn.report is not None:
-                self._validate_report(request, turn.report, ledger)
-                return InvestigationResult(
-                    report=turn.report,
-                    evidence=list(ledger.values()),
-                    trace=trace,
+            except ValueError:
+                failure_usage = summarize_usage(
+                    usage_records,
+                    model_calls=model_calls,
+                    pricing=None,
                 )
+            exc.attach_context(
+                trace=trace,
+                evidence=list(ledger.values()),
+                usage=failure_usage,
+            )
+            raise
 
-            for call in turn.tool_calls:
-                total_calls += 1
-                if total_calls > self._max_tool_calls:
-                    raise InvestigationFailedError("tool_call_budget_exhausted")
-                signature = self._call_signature(call)
-                if signature in seen_calls:
-                    raise InvestigationFailedError("duplicate_tool_call")
-                seen_calls.add(signature)
-                self._execute_call(round_number, call, request, ledger, trace)
-
-        raise InvestigationFailedError("investigation_round_budget_exhausted")
+    def _summarize_usage(
+        self,
+        records: Sequence[ModelUsage],
+        *,
+        model_calls: int,
+    ) -> UsageSummary:
+        try:
+            return summarize_usage(
+                records,
+                model_calls=model_calls,
+                pricing=self._pricing,
+            )
+        except ValueError as exc:
+            raise InvestigationFailedError("pricing_policy_mismatch") from exc
 
     @staticmethod
     def _call_signature(call: ToolCall) -> str:
@@ -162,6 +208,8 @@ class IncidentInvestigator:
                     if isinstance(value, datetime)
                     else datetime.fromisoformat(str(value))
                 )
+                if parsed.tzinfo is None or parsed.utcoffset() is None:
+                    raise ValueError("tool timestamps must include a timezone")
             except ValueError as exc:
                 raise ToolExecutionError("invalid_arguments") from exc
             if key == "started_at" and parsed < request.started_at:

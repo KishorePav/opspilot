@@ -1,1 +1,1 @@
-"""Retrieval evaluation metrics."""
+"""Retrieval and agent-workflow evaluation."""

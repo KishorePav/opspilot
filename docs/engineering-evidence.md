@@ -38,3 +38,21 @@ The single-investigator milestone is accepted only when automated tests prove:
 
 These tests prove contracts and failure behavior. They do not prove live-model
 diagnostic accuracy, production security, or customer impact.
+
+## Milestone 4 acceptance evidence
+
+The safety-and-evaluation milestone is accepted only when:
+
+- versioned JSONL cases replay both supported diagnoses and fail-closed paths;
+- graders inspect outcome, tool trace, required evidence, citation precision,
+  required-citation recall, injected-text propagation, and resource budgets;
+- malicious evidence cannot make an unregistered remediation tool succeed;
+- invented citations, duplicate calls, scope violations, and evidence-budget
+  overflow produce the expected typed failure or contained trace event;
+- token usage is normalized per model call and optional cost uses an explicit,
+  versioned price policy;
+- CI enforces checked-in thresholds and publishes the complete JSON result.
+
+The current six-case replay suite is deterministic and credential-free. Its
+rates are synthetic; it does not prove live-model accuracy or quote current
+provider pricing.

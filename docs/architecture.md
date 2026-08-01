@@ -36,6 +36,18 @@ and sanitized tool trace. This avoids provider-owned orchestration state and
 keeps deterministic gateways usable in CI, at the cost of repeating context on
 each live turn.
 
+Milestone 4 adds a replayable evaluation boundary around that unchanged agent.
+Each JSONL case contains an incident request, model-selected turns, token usage,
+budgets, and expected behavior. The replay gateway drives the real
+orchestrator and tools; deterministic graders then inspect terminal outcome,
+tool traces, collected evidence, citations, injected-text propagation, and
+resource use. Hard thresholds turn those grades into a CI regression gate.
+
+Provider usage is normalized into input, cached-input, output, reasoning, and
+total token fields. Dollar cost remains optional: the estimator operates only
+with an explicit model, three rates, and version label. Checked-in evaluation
+rates are intentionally synthetic and cannot be presented as provider pricing.
+
 ## Component responsibilities
 
 | Component | Responsibility | Must not do |
@@ -45,7 +57,7 @@ each live turn.
 | BM25 index | Lexical ranking | Infer semantic similarity |
 | Fusion | Combine independent ranked lists | Hide source attribution |
 | Retriever | Apply filters and return evidence | Produce a diagnosis |
-| Evaluation | Measure known-query retrieval | Use production secrets |
+| Evaluation | Grade retrieval and agent traces against versioned datasets | Use production secrets or hidden expectations |
 | API | Validate requests and serialize evidence | Contain ranking logic |
 | PostgreSQL adapter | Persist chunks and execute filtered hybrid queries | Synthesize answers |
 | Migration runner | Apply immutable, checksum-verified schema changes | Modify applied files |
@@ -54,6 +66,8 @@ each live turn.
 | Tool registry | Validate calls and return evidence records | Expose generic shell, SQL, or HTTP |
 | Evidence ledger | Record tool-derived IDs and validate citations | Treat model claims as evidence |
 | Operational adapter | Perform bounded read queries | Expand incident scope or mutate systems |
+| Usage accounting | Normalize provider tokens and apply explicit versioned rates | Guess current pricing |
+| Failure taxonomy | Classify sanitized terminal and trace errors | Expose provider or internal exception text |
 
 ## Planned production flow
 
@@ -65,8 +79,8 @@ each live turn.
 6. The investigator selects typed read-only tools inside bounded budgets.
 7. Successful tool results enter the evidence ledger with stable source IDs.
 8. A structured report is accepted only when every cited ID exists in the ledger.
-9. Evaluation and tracing record retrieval, tool, latency, token, and outcome
-   signals.
+9. Evaluation and tracing record retrieval, tool, citation, safety, latency,
+   token, cost-policy, and outcome signals.
 10. Any remediation request interrupts execution for human approval.
 
 ## Failure and consistency behavior
@@ -84,6 +98,11 @@ each live turn.
 - Unknown tools and invalid arguments create sanitized failed trace events.
 - Repeated calls, unknown citations, report scope violations, and exhausted
   budgets stop the investigation without returning an unsupported diagnosis.
+- Terminal failures carry a stable code, category, retryability flag, partial
+  trace, partial evidence ledger, and usage summary for grading; public API
+  responses expose only the sanitized subset.
+- Evaluation cases may intentionally trigger a forbidden tool request. Passing
+  requires that the unregistered call is observable and never succeeds.
 
 ## Trust boundaries
 

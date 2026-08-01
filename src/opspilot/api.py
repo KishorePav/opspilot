@@ -11,11 +11,9 @@ from pydantic import BaseModel, Field, field_validator
 
 from opspilot.bootstrap import build_investigator, build_retriever
 from opspilot.config import Settings
+from opspilot.investigation.failures import InvestigationFailedError
 from opspilot.investigation.models import IncidentRequest, InvestigationResult
-from opspilot.investigation.orchestrator import (
-    IncidentInvestigator,
-    InvestigationFailedError,
-)
+from opspilot.investigation.orchestrator import IncidentInvestigator
 from opspilot.retrieval.base import (
     ClosableRetriever,
     EvidenceRetriever,
@@ -83,7 +81,7 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="OpsPilot Investigation API", version="0.3.0", lifespan=_lifespan)
+    app = FastAPI(title="OpsPilot Investigation API", version="0.4.0", lifespan=_lifespan)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -126,6 +124,6 @@ def create_app() -> FastAPI:
         try:
             return investigator.investigate(request)
         except InvestigationFailedError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail=exc.public_detail()) from exc
 
     return app
