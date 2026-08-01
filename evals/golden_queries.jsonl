@@ -1,0 +1,5 @@
+{"id":"kafka-lag-001","query":"consumer lag increased after deployment and workers keep rebalancing","expected_document_ids":["kafka-consumer-lag"]}
+{"id":"kubernetes-oom-001","query":"pods restart with CrashLoopBackOff and exit code 137","expected_document_ids":["kubernetes-crashloop"]}
+{"id":"dataflow-iam-001","query":"Dataflow cannot act as the worker service account due to permission denied","expected_document_ids":["dataflow-permission-denied"]}
+{"id":"postgres-pool-001","query":"API latency rises while database connections are exhausted","expected_document_ids":["postgres-pool-exhaustion"]}
+{"id":"webhook-500-001","query":"webhook endpoint returns HTTP 500 and deliveries keep retrying","expected_document_ids":["webhook-delivery-failures"]}
