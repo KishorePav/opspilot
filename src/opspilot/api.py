@@ -194,7 +194,7 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="OpsPilot Investigation API", version="0.6.0", lifespan=_lifespan)
+    app = FastAPI(title="OpsPilot Investigation API", version="0.7.0", lifespan=_lifespan)
 
     investigator_access = require_roles("investigator")
     workflow_read_access = require_roles(

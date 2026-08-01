@@ -35,6 +35,7 @@ class ModelUsage(DomainModel):
 
 
 class UsageSummary(DomainModel):
+    models: list[str]
     model_calls: int = Field(ge=0)
     input_tokens: int = Field(ge=0)
     cached_input_tokens: int = Field(ge=0)

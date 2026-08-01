@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from openai import OpenAI, OpenAIError
 
@@ -77,10 +77,25 @@ class DisabledInvestigationGateway:
 class OpenAIInvestigationGateway(InvestigationModelGateway):
     """Responses API adapter for a bounded, provider-independent tool loop."""
 
-    def __init__(self, model: str, *, client: object | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        *,
+        timeout_seconds: float = 30.0,
+        max_output_tokens: int = 4_096,
+        reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None,
+        client: object | None = None,
+    ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
+        if timeout_seconds <= 0 or timeout_seconds > 120:
+            raise ValueError("timeout must be between 0 and 120 seconds")
+        if max_output_tokens < 256 or max_output_tokens > 32_768:
+            raise ValueError("max output tokens must be between 256 and 32768")
         self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._max_output_tokens = max_output_tokens
+        self._reasoning_effort = reasoning_effort
         self._client = client
 
     def next_turn(
@@ -109,14 +124,20 @@ class OpenAIInvestigationGateway(InvestigationModelGateway):
         }
 
         try:
+            request_options: dict[str, object] = {
+                "model": self._model,
+                "instructions": _INSTRUCTIONS,
+                "input": json.dumps(state, sort_keys=True),
+                "tools": definitions,
+                "tool_choice": "required",
+                "parallel_tool_calls": False,
+                "store": False,
+                "max_output_tokens": self._max_output_tokens,
+            }
+            if self._reasoning_effort is not None:
+                request_options["reasoning"] = {"effort": self._reasoning_effort}
             response = cast(Any, client).responses.create(
-                model=self._model,
-                instructions=_INSTRUCTIONS,
-                input=json.dumps(state, sort_keys=True),
-                tools=definitions,
-                tool_choice="required",
-                parallel_tool_calls=False,
-                store=False,
+                **request_options,
             )
         except OpenAIError as exc:
             raise ModelGatewayError("OpenAI Responses API request failed") from exc
@@ -130,7 +151,7 @@ class OpenAIInvestigationGateway(InvestigationModelGateway):
     def _get_client(self) -> object:
         if self._client is None:
             try:
-                self._client = OpenAI()
+                self._client = OpenAI(timeout=self._timeout_seconds, max_retries=0)
             except OpenAIError as exc:
                 raise ModelGatewayError("OpenAI client is not configured") from exc
         return self._client

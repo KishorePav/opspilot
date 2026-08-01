@@ -55,6 +55,7 @@ def summarize_usage(
 ) -> UsageSummary:
     estimated_cost = pricing.estimate(records) if pricing is not None else None
     return UsageSummary(
+        models=sorted({record.model for record in records}),
         model_calls=model_calls,
         input_tokens=sum(record.input_tokens for record in records),
         cached_input_tokens=sum(record.cached_input_tokens for record in records),

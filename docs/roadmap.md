@@ -8,9 +8,11 @@
 | 4. Safety and evaluation | Injection tests, trace graders, regression gates, failure taxonomy | Complete |
 | 5. Approval workflow | Durable run state, dry-run remediation, explicit approval, audit record | Complete |
 | 6. Production operations | OIDC/RBAC, tenant scope, fenced recovery, OpenTelemetry, hardened deployment, dashboard and SLO contract | Complete |
+| 7. Controlled model evidence and demo | Opt-in live cases, hard budgets, protected manual workflow, synthetic-only public demo, container smoke | Implementation complete; first live run pending |
 
 The checked-in deployment is a validated reference, not evidence that OpsPilot
-has served production traffic. A future milestone may add a real provider only
+has served production traffic. The milestone-7 demo is deterministic and does
+not establish live-model quality. A future milestone may add a real provider only
 after a least-privilege threat model, timeout and retry policy, staged rollout,
 and provider-specific integration tests exist.
 

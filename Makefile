@@ -1,4 +1,4 @@
-.PHONY: benchmark-db check compile eval eval-agent index-corpus lint migrate test test-api test-db typecheck validate-deploy
+.PHONY: benchmark-db check compile eval eval-agent eval-live index-corpus lint migrate test test-api test-db typecheck validate-demo validate-deploy
 
 PYTHON ?= python3
 export PYTHONPATH := src
@@ -24,6 +24,9 @@ eval:
 eval-agent:
 	$(PYTHON) scripts/run_agent_eval.py
 
+eval-live:
+	$(PYTHON) scripts/run_live_agent_eval.py --confirm-live-api
+
 migrate:
 	$(PYTHON) scripts/migrate.py
 
@@ -40,4 +43,7 @@ compile:
 validate-deploy:
 	$(PYTHON) scripts/validate_deployment.py
 
-check: lint typecheck compile test test-api eval eval-agent validate-deploy
+validate-demo:
+	$(PYTHON) scripts/validate_demo.py
+
+check: lint typecheck compile test test-api eval eval-agent validate-deploy validate-demo

@@ -41,6 +41,7 @@ class InvestigatorBudgets(EvalModel):
     max_rounds: int = Field(default=8, ge=1, le=20)
     max_tool_calls: int = Field(default=12, ge=1, le=50)
     max_evidence_items: int = Field(default=40, ge=1, le=100)
+    max_total_tokens: int = Field(default=20_000, ge=1, le=200_000)
 
 
 class EvaluationPricing(EvalModel):
@@ -125,8 +126,11 @@ class CaseEvaluation(EvalModel):
     citation_precision: float = Field(ge=0, le=1)
     citation_recall: float = Field(ge=0, le=1)
     grades: list[Grade]
+    report: DiagnosisReport | None
+    evidence: list[EvidenceItem]
     trace: list[ToolTrace]
     usage: UsageSummary
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 class EvaluationSummary(EvalModel):
@@ -139,7 +143,8 @@ class EvaluationSummary(EvalModel):
     citation_recall: float = Field(ge=0, le=1)
     total_model_calls: int
     total_tokens: int
-    estimated_cost_usd: Decimal
+    estimated_cost_usd: Decimal | None
+    observed_models: list[str]
     pricing_versions: list[str]
     observed_failures_by_category: dict[str, int]
 
@@ -238,18 +243,38 @@ class AgentEvaluator:
         self._tools = tuple(tools)
 
     def evaluate_case(self, case: AgentEvalCase) -> CaseEvaluation:
+        return self.evaluate_gateway(
+            case_id=case.case_id,
+            request=case.request,
+            expected=case.expected,
+            budgets=case.budgets,
+            gateway=ReplayGateway(case.turns),
+            pricing=case.pricing,
+        )
+
+    def evaluate_gateway(
+        self,
+        *,
+        case_id: str,
+        request: IncidentRequest,
+        expected: CaseExpectations,
+        budgets: InvestigatorBudgets,
+        gateway: InvestigationModelGateway,
+        pricing: EvaluationPricing | None = None,
+    ) -> CaseEvaluation:
         investigator = IncidentInvestigator(
-            ReplayGateway(case.turns),
+            gateway,
             self._tools,
-            max_rounds=case.budgets.max_rounds,
-            max_tool_calls=case.budgets.max_tool_calls,
-            max_evidence_items=case.budgets.max_evidence_items,
-            pricing=case.pricing.to_policy() if case.pricing is not None else None,
+            max_rounds=budgets.max_rounds,
+            max_tool_calls=budgets.max_tool_calls,
+            max_evidence_items=budgets.max_evidence_items,
+            max_total_tokens=budgets.max_total_tokens,
+            pricing=pricing.to_policy() if pricing is not None else None,
         )
         result: InvestigationResult | None = None
         failure: InvestigationFailedError | None = None
         try:
-            result = investigator.investigate(case.request)
+            result = investigator.investigate(request)
         except InvestigationFailedError as exc:
             failure = exc
 
@@ -268,7 +293,6 @@ class AgentEvaluator:
             assert failure.usage is not None
             usage = failure.usage
 
-        expected = case.expected
         evidence_ids = {item.evidence_id for item in evidence}
         citation_ids = _report_citations(report)
         known_citations = citation_ids & evidence_ids
@@ -379,7 +403,7 @@ class AgentEvaluator:
             ),
         ]
         return CaseEvaluation(
-            case_id=case.case_id,
+            case_id=case_id,
             expected_outcome=expected.outcome,
             observed_outcome=observed_outcome,
             passed=all(grade.passed for grade in grades),
@@ -388,6 +412,8 @@ class AgentEvaluator:
             citation_precision=citation_precision,
             citation_recall=citation_recall,
             grades=grades,
+            report=report,
+            evidence=evidence,
             trace=trace,
             usage=usage,
         )
@@ -401,6 +427,16 @@ def evaluate_cases(
 ) -> AgentEvaluationReport:
     evaluator = AgentEvaluator(tools)
     results = [evaluator.evaluate_case(case) for case in cases]
+    return summarize_case_evaluations(results, dataset_version=dataset_version)
+
+
+def summarize_case_evaluations(
+    results: Sequence[CaseEvaluation],
+    *,
+    dataset_version: str,
+) -> AgentEvaluationReport:
+    if not results:
+        raise ValueError("agent evaluation results are empty")
     safety_grades = [
         grade
         for result in results
@@ -422,12 +458,15 @@ def evaluate_cases(
             if trace_item.error_code is not None:
                 category = failure_definition(trace_item.error_code).category
                 failure_categories[category] += 1
-    estimated_cost = sum(
-        (
-            result.usage.estimated_cost_usd or Decimal("0")
-            for result in results
-        ),
-        start=Decimal("0"),
+    priced_results = [
+        result.usage.estimated_cost_usd
+        for result in results
+        if result.usage.estimated_cost_usd is not None
+    ]
+    estimated_cost = (
+        sum(priced_results, start=Decimal("0"))
+        if len(priced_results) == len(results)
+        else None
     )
     count = len(results)
     summary = EvaluationSummary(
@@ -445,10 +484,13 @@ def evaluate_cases(
         total_model_calls=sum(result.usage.model_calls for result in results),
         total_tokens=sum(result.usage.total_tokens for result in results),
         estimated_cost_usd=estimated_cost,
+        observed_models=sorted(
+            {model for result in results for model in result.usage.models}
+        ),
         pricing_versions=pricing_versions,
         observed_failures_by_category=dict(sorted(failure_categories.items())),
     )
-    return AgentEvaluationReport(summary=summary, cases=results)
+    return AgentEvaluationReport(summary=summary, cases=list(results))
 
 
 def enforce_thresholds(
@@ -469,7 +511,9 @@ def enforce_thresholds(
         failures.append("citation_recall")
     if summary.total_tokens > thresholds.maximum_total_tokens:
         failures.append("total_tokens")
-    if summary.estimated_cost_usd > thresholds.maximum_estimated_cost_usd:
+    if summary.estimated_cost_usd is None:
+        failures.append("estimated_cost_unavailable")
+    elif summary.estimated_cost_usd > thresholds.maximum_estimated_cost_usd:
         failures.append("estimated_cost_usd")
     if failures:
         raise AgentEvaluationRegressionError(

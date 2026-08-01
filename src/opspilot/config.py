@@ -5,6 +5,7 @@ import socket
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal, cast
 
 
 def _optional_decimal(name: str) -> Decimal | None:
@@ -31,6 +32,10 @@ class Settings:
     investigation_max_rounds: int
     investigation_max_tool_calls: int
     investigation_max_evidence_items: int
+    investigation_max_total_tokens: int
+    investigation_timeout_seconds: float
+    investigation_max_output_tokens: int
+    investigation_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None
     approval_ttl_seconds: int
     execution_lease_ttl_seconds: int
     worker_id: str
@@ -62,10 +67,26 @@ class Settings:
                 self.investigation_max_rounds,
                 self.investigation_max_tool_calls,
                 self.investigation_max_evidence_items,
+                self.investigation_max_total_tokens,
             )
             < 1
         ):
             raise ValueError("investigation budgets must be positive")
+        if self.investigation_timeout_seconds <= 0 or self.investigation_timeout_seconds > 120:
+            raise ValueError("investigation timeout must be between 0 and 120 seconds")
+        if (
+            self.investigation_max_output_tokens < 256
+            or self.investigation_max_output_tokens > 32_768
+        ):
+            raise ValueError("investigation output budget must be between 256 and 32768")
+        if self.investigation_reasoning_effort not in {
+            None,
+            "minimal",
+            "low",
+            "medium",
+            "high",
+        }:
+            raise ValueError("investigation reasoning effort is invalid")
         if self.approval_ttl_seconds < 1 or self.approval_ttl_seconds > 3_600:
             raise ValueError("approval TTL must be between 1 and 3600 seconds")
         if self.execution_lease_ttl_seconds < 5 or self.execution_lease_ttl_seconds > 300:
@@ -123,6 +144,19 @@ class Settings:
             ),
             investigation_max_evidence_items=int(
                 os.getenv("OPSPILOT_INVESTIGATION_MAX_EVIDENCE_ITEMS", "40")
+            ),
+            investigation_max_total_tokens=int(
+                os.getenv("OPSPILOT_INVESTIGATION_MAX_TOTAL_TOKENS", "20000")
+            ),
+            investigation_timeout_seconds=float(
+                os.getenv("OPSPILOT_INVESTIGATION_TIMEOUT_SECONDS", "30")
+            ),
+            investigation_max_output_tokens=int(
+                os.getenv("OPSPILOT_INVESTIGATION_MAX_OUTPUT_TOKENS", "4096")
+            ),
+            investigation_reasoning_effort=cast(
+                Literal["minimal", "low", "medium", "high"] | None,
+                os.getenv("OPSPILOT_INVESTIGATION_REASONING_EFFORT") or None,
             ),
             approval_ttl_seconds=int(os.getenv("OPSPILOT_APPROVAL_TTL_SECONDS", "900")),
             execution_lease_ttl_seconds=int(

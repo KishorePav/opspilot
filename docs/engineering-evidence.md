@@ -100,3 +100,29 @@ prove:
 These checks prove configuration and contract behavior. They do not prove a
 live identity-provider integration, real remediation provider, production
 traffic, 30-day SLO attainment, or live-model diagnostic quality.
+
+## Milestone 7 acceptance evidence
+
+The controlled-evaluation and demo milestone is accepted when automated checks
+prove:
+
+- normal tests, pull requests, and container startup cannot trigger a provider
+  request or consume credits;
+- the live runner requires both `--confirm-live-api` and a runtime-only
+  `OPENAI_API_KEY`;
+- every live case bounds rounds, tools, evidence, total tokens, per-call output,
+  timeout, retries, and selected-case count;
+- the artifact records a dataset digest, requested and observed model names,
+  the complete synthetic evidence/trace, citations, latency, actual tokens, and
+  grades;
+- dollar estimates remain absent unless a complete versioned price policy is
+  supplied;
+- the demo runs the real bounded investigator but accepts only one allowlisted
+  replay case and exposes no arbitrary prompt or remediation route;
+- the demo container builds and its scenario endpoint passes a hosted smoke
+  test.
+
+These checks establish a safe path for collecting live evidence and a
+deployable portfolio demonstration. They do not themselves establish a
+live-model pass rate. That claim requires an artifact from the protected manual
+workflow tied to a commit and model identifier.

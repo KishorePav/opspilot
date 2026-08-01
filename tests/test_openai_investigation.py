@@ -92,6 +92,8 @@ class OpenAIInvestigationGatewayTests(unittest.TestCase):
         assert client.responses.arguments is not None
         self.assertEqual("required", client.responses.arguments["tool_choice"])
         self.assertFalse(client.responses.arguments["parallel_tool_calls"])
+        self.assertEqual(4096, client.responses.arguments["max_output_tokens"])
+        self.assertNotIn("reasoning", client.responses.arguments)
         definitions = cast(
             list[dict[str, object]], client.responses.arguments["tools"]
         )
@@ -105,6 +107,34 @@ class OpenAIInvestigationGatewayTests(unittest.TestCase):
         self.assertFalse(parameters["additionalProperties"])
         for definition in definitions:
             self.assert_strict_object_schemas(definition["parameters"])
+
+    def test_live_adapter_applies_explicit_reasoning_and_output_limits(self) -> None:
+        client = FakeClient()
+        gateway = OpenAIInvestigationGateway(
+            "gpt-5.6",
+            max_output_tokens=2048,
+            reasoning_effort="low",
+            client=client,
+        )
+        request = IncidentRequest(
+            incident_id="inc-dataflow-042",
+            summary="Workers cannot start",
+            environment="synthetic",
+            started_at=datetime.fromisoformat("2026-08-01T10:00:00+00:00"),
+            ended_at=datetime.fromisoformat("2026-08-01T10:15:00+00:00"),
+            services=["dataflow-worker"],
+        )
+        tool = ToolSpec(
+            name="search_logs",
+            description="Search logs",
+            input_schema={"type": "object", "properties": {}},
+        )
+
+        gateway.next_turn(request, evidence=[], trace=[], tools=[tool])
+
+        assert client.responses.arguments is not None
+        self.assertEqual(2048, client.responses.arguments["max_output_tokens"])
+        self.assertEqual({"effort": "low"}, client.responses.arguments["reasoning"])
 
 
 if __name__ == "__main__":

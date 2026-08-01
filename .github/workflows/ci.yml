@@ -79,3 +79,16 @@ jobs:
           done
           docker logs opspilot-smoke
           exit 1
+      - run: docker build --target demo --tag opspilot-demo:${{ github.sha }} .
+      - run: >-
+          docker run --detach --name opspilot-demo-smoke --publish 8081:8080
+          opspilot-demo:${{ github.sha }}
+      - run: |
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://localhost:8081/api/scenarios; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs opspilot-demo-smoke
+          exit 1
