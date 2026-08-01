@@ -5,27 +5,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TypedDict
 
-from opspilot.domain.models import Document, SearchHit
+from opspilot.corpus import load_markdown_documents
+from opspilot.domain.models import SearchHit
 from opspilot.evaluation.metrics import summarize
 from opspilot.retrieval.embedding import HashEmbeddingProvider
 from opspilot.retrieval.service import HybridRetriever
-
-
-def load_documents(directory: Path) -> list[Document]:
-    documents = []
-    for path in sorted(directory.glob("*.md")):
-        content = path.read_text(encoding="utf-8")
-        title = content.splitlines()[0].lstrip("# ").strip()
-        documents.append(
-            Document(
-                document_id=path.stem,
-                title=title,
-                content=content,
-                source=str(path),
-                metadata={"environment": "synthetic"},
-            )
-        )
-    return documents
 
 
 class GoldenCase(TypedDict):
@@ -45,7 +29,7 @@ def unique_document_ranking(hits: list[SearchHit]) -> list[str]:
 
 def main() -> None:
     retriever = HybridRetriever(HashEmbeddingProvider())
-    retriever.index_documents(load_documents(Path("fixtures/runbooks")))
+    retriever.index_documents(load_markdown_documents(Path("fixtures/runbooks")))
 
     evaluated = []
     with Path("evals/golden_queries.jsonl").open(encoding="utf-8") as handle:

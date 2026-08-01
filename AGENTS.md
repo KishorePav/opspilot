@@ -25,7 +25,12 @@ make check
 ```
 
 When database adapters change, also run the pgvector integration suite once it
-is introduced.
+is introduced:
+
+```bash
+make test-db
+make benchmark-db
+```
 
 ## Commit and claim discipline
 

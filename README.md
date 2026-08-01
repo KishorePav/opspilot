@@ -10,7 +10,7 @@ client deployment.
 
 ## Current status
 
-**Foundation milestone — implemented locally, publication pending.**
+**Milestone 2 — persistence-backed hybrid retrieval.**
 
 The current slice provides:
 
@@ -20,11 +20,14 @@ The current slice provides:
 - weighted reciprocal-rank fusion with source-level citations;
 - offline retrieval evaluation using Recall@K, MRR, and nDCG@K;
 - a FastAPI retrieval boundary and health endpoint;
-- a PostgreSQL/pgvector schema with HNSW and full-text indexes;
-- unit tests and a CI quality gate that does not require an API key.
+- durable PostgreSQL storage with idempotent, atomic document replacement;
+- database-side full-text and HNSW vector search with metadata pre-filtering;
+- checksum-protected schema migrations and a bounded connection pool;
+- PostgreSQL integration tests and a reproducible latency benchmark;
+- unit tests and an offline CI quality gate that does not require an API key.
 
-Agent orchestration, production storage integration, evidence synthesis,
-guardrails, approvals, and tracing are deliberately separate milestones.
+Agent orchestration, evidence synthesis, guardrails, approvals, and tracing are
+deliberately separate milestones.
 
 ## Why this project exists
 
@@ -54,9 +57,10 @@ flowchart TD
     I --> J[Human approval - future milestone]
 ```
 
-The offline test harness uses a deterministic hash embedder. Production mode
-will use the same interface with OpenAI embeddings; the current official
-default is configurable and set to `text-embedding-3-small`.
+The offline test harness and PostgreSQL benchmark use a deterministic hash
+embedder. They prove interfaces and regression behavior, not model quality.
+Production mode uses the same interface with OpenAI embeddings; the configured
+default is `text-embedding-3-small`.
 
 ## Run the verified offline slice
 
@@ -85,6 +89,48 @@ curl -s http://127.0.0.1:8000/v1/retrieve \
   -d '{"query":"Dataflow cannot act as the worker service account","top_k":3}'
 ```
 
+## Run the persistent retrieval slice
+
+Start PostgreSQL, apply the versioned migration, and index the synthetic corpus:
+
+```bash
+docker compose up -d postgres
+make migrate
+make index-corpus
+```
+
+Run the API against PostgreSQL:
+
+```bash
+OPSPILOT_RETRIEVAL_BACKEND=postgres uvicorn opspilot.main:app --reload
+```
+
+Metadata filters are bound as JSON data and applied independently to the
+lexical and vector candidate sets before reciprocal-rank fusion:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/retrieve \
+  -H 'content-type: application/json' \
+  -d '{
+    "query":"database connection exhaustion",
+    "top_k":5,
+    "filters":{"environment":"synthetic"}
+  }'
+```
+
+Run the database integration and benchmark gates with
+`OPSPILOT_TEST_DATABASE_URL` configured:
+
+```bash
+make test-db
+make benchmark-db
+```
+
+The benchmark measures filtered hybrid retrieval over a generated synthetic
+corpus and writes a JSON artifact with indexing time, p50/p95/p99 latency, and
+throughput. It is an environment-specific baseline, not a production-scale
+claim. See [the benchmark contract](docs/benchmarks/pgvector.md).
+
 ## Evidence, not activity theatre
 
 The repository uses milestone branches and reviewable pull requests. Commits
@@ -99,7 +145,7 @@ and [the evidence policy](docs/engineering-evidence.md).
 ## Repository map
 
 ```text
-src/opspilot/       Retrieval domain, adapters, evaluation, and API
+src/opspilot/       Retrieval domain, PostgreSQL adapter, evaluation, and API
 tests/              Deterministic unit and acceptance tests
 fixtures/runbooks/  Synthetic operational runbooks used by the demo
 evals/              Versioned golden-query datasets
