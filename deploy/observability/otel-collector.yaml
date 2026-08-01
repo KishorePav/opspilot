@@ -1,0 +1,38 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  batch:
+    timeout: 5s
+  attributes/privacy:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: enduser.id
+        action: delete
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlphttp/traces:
+    endpoint: ${env:TRACE_BACKEND_OTLP_ENDPOINT}
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/privacy, batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/privacy, batch]
+      exporters: [otlphttp/traces]

@@ -61,6 +61,26 @@ idempotency key and one-execution-per-proposal constraint prevent duplicate
 side effects across retries or process restarts. Audit events form a per-run
 SHA-256 chain and database triggers reject row updates and deletes.
 
+Milestone 6 moves actor and tenant authority to verified OIDC access tokens.
+The JWKS adapter fixes the accepted asymmetric algorithms and validates issuer,
+audience, expiry, issued-at, subject, actor type, tenant, and roles. FastAPI
+dependencies enforce endpoint RBAC, while the workflow service independently
+checks every retrieved run or proposal against the principal tenant. Another
+tenant receives a not-found response rather than resource-existence evidence.
+
+Execution claims now have a worker owner, expiry, attempt count, and fencing
+token. The same idempotency key can recover an expired claim; the transaction
+increments the token and extends the audit chain. A completion, failure, or
+heartbeat using an earlier token, another worker, or an expired lease fails.
+
+Manual OpenTelemetry spans and metrics cover HTTP, authentication, workflow
+operations, model-token totals, and lease recovery. Only route templates and
+bounded outcome fields are accepted. Incident content, evidence, identities,
+tenants, prompts, credentials, and provider exception text never cross the
+telemetry interface. A validated container and Kubernetes base add probes,
+non-root execution, a read-only filesystem, dropped capabilities, resource
+bounds, disruption protection, scaling, and network-policy scaffolding.
+
 ## Component responsibilities
 
 | Component | Responsibility | Must not do |
@@ -86,25 +106,35 @@ SHA-256 chain and database triggers reject row updates and deletes.
 | Human decision | Approve or reject one immutable plan digest | Approve changed or expired plans |
 | Remediation executor | Preview and execute one registered action | Expose shell, generic HTTP, SQL, or model access |
 | Audit chain | Make workflow history tamper-evident and append-only | Authorize an action by itself |
+| OIDC authenticator | Validate signing key and required identity claims | Choose policy or trust token algorithms dynamically |
+| RBAC dependency | Map verified roles to one endpoint capability | Accept actors or tenants from request JSON |
+| Tenant guard | Hide cross-tenant runs and proposals | Use retrieval metadata as authorization |
+| Execution lease | Recover abandoned work with an incremented fence | Permit a stale worker to commit |
+| Telemetry boundary | Emit bounded operational signals | Export content, identity, prompts, tokens, or credentials |
 
-## Planned production flow
+## Production reference flow
 
-1. Ingestion validates source, tenant, sensitivity, and metadata.
-2. Chunking creates stable evidence identifiers.
-3. Embeddings are generated in bounded batches with retries and rate limits.
-4. PostgreSQL stores text, metadata, generated full-text vectors, and embeddings.
-5. Retrieval applies tenant and service filters before ranking.
-6. The investigator selects typed read-only tools inside bounded budgets.
-7. Successful tool results enter the evidence ledger with stable source IDs.
-8. A structured report is accepted only when every cited ID exists in the ledger.
-9. Evaluation and tracing record retrieval, tool, citation, safety, latency,
-   token, cost-policy, and outcome signals.
-10. A human-authored typed proposal cites evidence from the completed diagnosis.
-11. A dry run produces a preview without side effects and the plan is hashed.
-12. A separate human approves or rejects that exact digest before expiry.
-13. PostgreSQL atomically claims one idempotent execution for the proposal.
-14. The bounded executor records the outcome and each transition extends the
-    tamper-evident audit chain.
+1. Authentication validates the token signature, issuer, audience, lifetime,
+   actor type, tenant, and role.
+2. Ingestion validates source, tenant, sensitivity, and metadata.
+3. Chunking creates stable evidence identifiers.
+4. Embeddings are generated in bounded batches with retries and rate limits.
+5. PostgreSQL stores text, metadata, generated full-text vectors, and embeddings.
+6. Retrieval applies tenant and service filters before ranking.
+7. The investigator selects typed read-only tools inside bounded budgets.
+8. Successful tool results enter the evidence ledger with stable source IDs.
+9. A structured report is accepted only when every cited ID exists in the ledger.
+10. Evaluation and tracing record retrieval, tool, citation, safety, latency,
+    token, cost-policy, and outcome signals.
+11. A human-authored typed proposal cites evidence from the completed diagnosis.
+12. A dry run produces a preview without side effects and the plan is hashed.
+13. A separate human approves or rejects that exact digest before expiry.
+14. PostgreSQL creates a leased execution claim with an idempotency key and
+    fencing token.
+15. The bounded executor records the outcome only while it owns the live fence;
+    every transition extends the tamper-evident audit chain.
+16. OpenTelemetry records bounded outcome and latency signals without content
+    or identity attributes.
 
 ## Failure and consistency behavior
 
@@ -112,7 +142,8 @@ SHA-256 chain and database triggers reject row updates and deletes.
 - Re-indexing a document deletes stale chunks and inserts replacements in one
   transaction; readers see the old or new version, never a partial replacement.
 - Metadata filters use bound JSON values. They are a retrieval constraint, not
-  an authorization system; future tenant isolation must be enforced separately.
+  an authorization system; durable workflow tenancy is enforced separately
+  from token claims and persisted run ownership.
 - Connection, pool, and statement failures cross the adapter boundary as a
   sanitized availability error and become HTTP 503 responses.
 - Applied migration checksums are recorded. Editing a historical migration
@@ -132,8 +163,13 @@ SHA-256 chain and database triggers reject row updates and deletes.
   fail before the executor is invoked.
 - A repeated idempotency key returns the stored terminal execution; a different
   key for the same proposal fails instead of creating another action.
+- An executing claim can be recovered only after its lease expires and only
+  with the same idempotency key. Recovery increments the fencing token; stale
+  completion, failure, and heartbeat attempts fail.
 - Audit verification fails on missing, reordered, reparented, or modified
   events. Audit rows reject application-level updates and deletes.
+- Missing, invalid, wrongly scoped, expired, or insufficient-role tokens fail
+  before the endpoint invokes the domain workflow.
 
 ## Trust boundaries
 
@@ -142,11 +178,12 @@ system instructions or authorize tools. Credentials stay server-side and tools
 receive narrowly scoped identities. Public fixtures are synthetic.
 
 The current operational source is a synthetic JSON fixture. Production log,
-deployment, and metric adapters still require authentication, RBAC or tenant
-enforcement, timeouts, pagination, and provider-specific availability handling.
+deployment, and metric adapters still require provider-specific identity,
+timeouts, pagination, tenant-aware queries, and availability handling.
 
 The remediation executor is also synthetic and only accepts the `synthetic`
-environment. Actor objects demonstrate the authorization contract but are not
-yet bound to authenticated principals. Production execution also requires a
-least-privilege provider identity, policy-backed RBAC, timeout and retry rules,
-and recovery of claims abandoned while an executor process is unavailable.
+environment. Actors and tenants are now bound to authenticated principals, but
+production execution still requires a least-privilege provider identity,
+provider-side idempotency, timeout and retry rules, and workload-specific
+policy. The checked-in deployment and SLOs are validated reference artifacts,
+not evidence of a live production deployment.

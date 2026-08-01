@@ -77,3 +77,26 @@ The durable approval milestone is accepted only when automated tests prove:
 The checked-in executor is intentionally simulated. These checks prove policy,
 state-transition, idempotency, and audit contracts; they do not prove a real
 Kubernetes/cloud integration, authenticated RBAC, or production recovery.
+
+## Milestone 6 acceptance evidence
+
+The production-operations milestone is accepted only when automated checks
+prove:
+
+- asymmetric tokens validate fixed algorithms, signature keys, issuer,
+  audience, lifetime, subject, actor type, tenant, and known roles;
+- missing credentials and insufficient roles fail before protected endpoint
+  work, and request JSON can no longer choose the actor;
+- cross-tenant run and proposal identifiers return not-found responses;
+- an expired execution lease is recoverable with the same idempotency key and a
+  higher fencing token, while its stale worker cannot commit;
+- telemetry accepts only registered bounded attributes and excludes incident,
+  evidence, identity, tenant, prompt, token, and credential content;
+- deployment validation checks non-root/read-only execution, dropped
+  capabilities, probes, resources, disruption protection, scaling, network
+  policy, collector privacy actions, alerts, and dashboard structure;
+- CI builds the runtime container and its unauthenticated liveness probe passes.
+
+These checks prove configuration and contract behavior. They do not prove a
+live identity-provider integration, real remediation provider, production
+traffic, 30-day SLO attainment, or live-model diagnostic quality.

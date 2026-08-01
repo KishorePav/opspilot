@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: opspilot
+spec:
+  selector:
+    app.kubernetes.io/name: opspilot
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

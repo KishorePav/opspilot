@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -31,6 +32,13 @@ class Settings:
     investigation_max_tool_calls: int
     investigation_max_evidence_items: int
     approval_ttl_seconds: int
+    execution_lease_ttl_seconds: int
+    worker_id: str
+    auth_jwks_url: str | None
+    auth_issuer: str | None
+    auth_audience: str | None
+    telemetry_exporter: str
+    otlp_endpoint: str | None
     pricing_version: str | None
     input_usd_per_million: Decimal | None
     cached_input_usd_per_million: Decimal | None
@@ -49,14 +57,30 @@ class Settings:
             raise ValueError("investigation provider must be 'disabled' or 'openai'")
         if not self.investigation_model.strip():
             raise ValueError("investigation model must not be empty")
-        if min(
-            self.investigation_max_rounds,
-            self.investigation_max_tool_calls,
-            self.investigation_max_evidence_items,
-        ) < 1:
+        if (
+            min(
+                self.investigation_max_rounds,
+                self.investigation_max_tool_calls,
+                self.investigation_max_evidence_items,
+            )
+            < 1
+        ):
             raise ValueError("investigation budgets must be positive")
         if self.approval_ttl_seconds < 1 or self.approval_ttl_seconds > 3_600:
             raise ValueError("approval TTL must be between 1 and 3600 seconds")
+        if self.execution_lease_ttl_seconds < 5 or self.execution_lease_ttl_seconds > 300:
+            raise ValueError("execution lease TTL must be between 5 and 300 seconds")
+        if not self.worker_id or len(self.worker_id) > 128:
+            raise ValueError("worker ID must contain 1 to 128 characters")
+        auth_values = (self.auth_jwks_url, self.auth_issuer, self.auth_audience)
+        if any(auth_values) and not all(auth_values):
+            raise ValueError(
+                "JWKS URL, token issuer, and token audience must be configured together"
+            )
+        if self.telemetry_exporter not in {"none", "otlp"}:
+            raise ValueError("telemetry exporter must be 'none' or 'otlp'")
+        if self.telemetry_exporter == "otlp" and not self.otlp_endpoint:
+            raise ValueError("OTLP telemetry requires OPSPILOT_OTLP_ENDPOINT")
         pricing_values = (
             self.input_usd_per_million,
             self.cached_input_usd_per_million,
@@ -76,9 +100,7 @@ class Settings:
             environment=os.getenv("OPSPILOT_ENVIRONMENT", "local"),
             retrieval_backend=os.getenv("OPSPILOT_RETRIEVAL_BACKEND", "memory"),
             embedding_provider=os.getenv("OPSPILOT_EMBEDDING_PROVIDER", "hash"),
-            embedding_model=os.getenv(
-                "OPSPILOT_EMBEDDING_MODEL", "text-embedding-3-small"
-            ),
+            embedding_model=os.getenv("OPSPILOT_EMBEDDING_MODEL", "text-embedding-3-small"),
             embedding_dimensions=int(os.getenv("OPSPILOT_EMBEDDING_DIMENSIONS", "1536")),
             corpus_dir=Path(os.getenv("OPSPILOT_CORPUS_DIR", "fixtures/runbooks")),
             database_url=os.getenv(
@@ -87,9 +109,7 @@ class Settings:
             ),
             database_pool_min_size=int(os.getenv("OPSPILOT_DATABASE_POOL_MIN_SIZE", "1")),
             database_pool_max_size=int(os.getenv("OPSPILOT_DATABASE_POOL_MAX_SIZE", "8")),
-            investigation_provider=os.getenv(
-                "OPSPILOT_INVESTIGATION_PROVIDER", "disabled"
-            ),
+            investigation_provider=os.getenv("OPSPILOT_INVESTIGATION_PROVIDER", "disabled"),
             investigation_model=os.getenv("OPSPILOT_INVESTIGATION_MODEL", "gpt-5.6"),
             operational_fixture_path=Path(
                 os.getenv(
@@ -97,9 +117,7 @@ class Settings:
                     "fixtures/operations/dataflow-permission-denied.json",
                 )
             ),
-            investigation_max_rounds=int(
-                os.getenv("OPSPILOT_INVESTIGATION_MAX_ROUNDS", "8")
-            ),
+            investigation_max_rounds=int(os.getenv("OPSPILOT_INVESTIGATION_MAX_ROUNDS", "8")),
             investigation_max_tool_calls=int(
                 os.getenv("OPSPILOT_INVESTIGATION_MAX_TOOL_CALLS", "12")
             ),
@@ -107,14 +125,17 @@ class Settings:
                 os.getenv("OPSPILOT_INVESTIGATION_MAX_EVIDENCE_ITEMS", "40")
             ),
             approval_ttl_seconds=int(os.getenv("OPSPILOT_APPROVAL_TTL_SECONDS", "900")),
+            execution_lease_ttl_seconds=int(
+                os.getenv("OPSPILOT_EXECUTION_LEASE_TTL_SECONDS", "30")
+            ),
+            worker_id=os.getenv("OPSPILOT_WORKER_ID", socket.gethostname()),
+            auth_jwks_url=os.getenv("OPSPILOT_AUTH_JWKS_URL") or None,
+            auth_issuer=os.getenv("OPSPILOT_AUTH_ISSUER") or None,
+            auth_audience=os.getenv("OPSPILOT_AUTH_AUDIENCE") or None,
+            telemetry_exporter=os.getenv("OPSPILOT_TELEMETRY_EXPORTER", "none"),
+            otlp_endpoint=os.getenv("OPSPILOT_OTLP_ENDPOINT") or None,
             pricing_version=os.getenv("OPSPILOT_PRICING_VERSION") or None,
-            input_usd_per_million=_optional_decimal(
-                "OPSPILOT_INPUT_USD_PER_MILLION"
-            ),
-            cached_input_usd_per_million=_optional_decimal(
-                "OPSPILOT_CACHED_INPUT_USD_PER_MILLION"
-            ),
-            output_usd_per_million=_optional_decimal(
-                "OPSPILOT_OUTPUT_USD_PER_MILLION"
-            ),
+            input_usd_per_million=_optional_decimal("OPSPILOT_INPUT_USD_PER_MILLION"),
+            cached_input_usd_per_million=_optional_decimal("OPSPILOT_CACHED_INPUT_USD_PER_MILLION"),
+            output_usd_per_million=_optional_decimal("OPSPILOT_OUTPUT_USD_PER_MILLION"),
         )

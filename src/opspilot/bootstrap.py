@@ -9,11 +9,13 @@ from opspilot.adapters.openai_investigation import (
 from opspilot.adapters.postgres import PostgresHybridRetriever
 from opspilot.adapters.postgres_workflow import PostgresWorkflowStore
 from opspilot.adapters.synthetic_remediation import SyntheticRemediationExecutor
+from opspilot.auth import Authenticator, JWKSAuthenticator
 from opspilot.config import Settings
 from opspilot.corpus import load_markdown_documents
 from opspilot.investigation.gateway import InvestigationModelGateway
 from opspilot.investigation.orchestrator import IncidentInvestigator
 from opspilot.investigation.usage import PricingPolicy
+from opspilot.observability import Observability, build_observability
 from opspilot.retrieval.base import EvidenceRetriever
 from opspilot.retrieval.embedding import (
     EmbeddingProvider,
@@ -97,6 +99,7 @@ def build_investigator(
 def build_workflow_service(
     settings: Settings,
     investigator: IncidentInvestigator,
+    observability: Observability,
 ) -> RemediationWorkflowService:
     store = PostgresWorkflowStore(
         settings.database_url,
@@ -108,4 +111,26 @@ def build_workflow_service(
         store,
         SyntheticRemediationExecutor(),
         approval_ttl=timedelta(seconds=settings.approval_ttl_seconds),
+        execution_lease_ttl=timedelta(seconds=settings.execution_lease_ttl_seconds),
+        worker_id=settings.worker_id,
+        observability=observability,
+    )
+
+
+def build_authenticator(settings: Settings) -> Authenticator:
+    if not settings.auth_jwks_url or not settings.auth_issuer or not settings.auth_audience:
+        raise RuntimeError("OIDC authentication is not configured")
+    return JWKSAuthenticator(
+        jwks_url=settings.auth_jwks_url,
+        issuer=settings.auth_issuer,
+        audience=settings.auth_audience,
+    )
+
+
+def build_telemetry(settings: Settings) -> Observability:
+    return build_observability(
+        exporter=settings.telemetry_exporter,
+        endpoint=settings.otlp_endpoint,
+        service_version="0.6.0",
+        environment=settings.environment,
     )

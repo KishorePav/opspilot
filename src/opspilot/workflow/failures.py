@@ -24,6 +24,9 @@ WORKFLOW_FAILURES: dict[str, WorkflowFailureDefinition] = {
     "execution_in_progress": WorkflowFailureDefinition(
         409, "The remediation execution is already in progress."
     ),
+    "execution_lease_lost": WorkflowFailureDefinition(
+        409, "The remediation execution lease is no longer owned by this worker."
+    ),
     "idempotency_key_conflict": WorkflowFailureDefinition(
         409, "A different idempotency key already owns this remediation."
     ),

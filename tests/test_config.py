@@ -41,6 +41,21 @@ class SettingsTests(unittest.TestCase):
         ), self.assertRaisesRegex(ValueError, "approval TTL"):
             Settings.from_environment()
 
+    def test_execution_lease_and_auth_configuration_fail_closed(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPSPILOT_EXECUTION_LEASE_TTL_SECONDS": "4"},
+            clear=True,
+        ), self.assertRaisesRegex(ValueError, "execution lease TTL"):
+            Settings.from_environment()
+
+        with patch.dict(
+            os.environ,
+            {"OPSPILOT_AUTH_JWKS_URL": "https://identity.example.test/jwks"},
+            clear=True,
+        ), self.assertRaisesRegex(ValueError, "configured together"):
+            Settings.from_environment()
+
 
 if __name__ == "__main__":
     unittest.main()

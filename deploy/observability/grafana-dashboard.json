@@ -1,0 +1,49 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {
+      "title": "API availability (5m)",
+      "type": "stat",
+      "targets": [{"expr": "opspilot:http_availability:ratio_5m", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}
+    },
+    {
+      "title": "API p95 duration",
+      "type": "timeseries",
+      "targets": [{"expr": "opspilot:http_duration:p95_5m", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0}
+    },
+    {
+      "title": "Workflow outcomes",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (operation, outcome) (rate(opspilot_workflow_operations_total[5m]))", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}
+    },
+    {
+      "title": "Authentication denials",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (reason) (rate(opspilot_auth_decisions_total{outcome=\"denied\"}[5m]))", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8}
+    },
+    {
+      "title": "Lease recoveries",
+      "type": "stat",
+      "targets": [{"expr": "increase(opspilot_remediation_lease_recoveries_total[1h])", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8}
+    },
+    {
+      "title": "Model tokens",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (type) (rate(opspilot_model_tokens_total[5m]))", "refId": "A"}],
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8}
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": ["opspilot", "slo"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "OpsPilot production readiness",
+  "uid": "opspilot-production-readiness",
+  "version": 1
+}

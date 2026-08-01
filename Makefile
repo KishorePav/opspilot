@@ -1,4 +1,4 @@
-.PHONY: benchmark-db check compile eval eval-agent index-corpus lint migrate test test-api test-db typecheck
+.PHONY: benchmark-db check compile eval eval-agent index-corpus lint migrate test test-api test-db typecheck validate-deploy
 
 PYTHON ?= python3
 export PYTHONPATH := src
@@ -37,4 +37,7 @@ benchmark-db:
 compile:
 	$(PYTHON) -m compileall -q src scripts tests integration_tests
 
-check: lint typecheck compile test test-api eval eval-agent
+validate-deploy:
+	$(PYTHON) scripts/validate_deployment.py
+
+check: lint typecheck compile test test-api eval eval-agent validate-deploy
