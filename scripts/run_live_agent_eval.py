@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from time import perf_counter
+from typing import Literal, cast
 
+from opspilot.adapters.gemini_investigation import GeminiInvestigationGateway
 from opspilot.adapters.openai_investigation import OpenAIInvestigationGateway
 from opspilot.corpus import load_markdown_documents
 from opspilot.evaluation.live import (
@@ -19,6 +21,7 @@ from opspilot.evaluation.live import (
     load_live_thresholds,
     pricing_from_values,
 )
+from opspilot.investigation.gateway import InvestigationModelGateway
 from opspilot.retrieval.embedding import HashEmbeddingProvider
 from opspilot.retrieval.service import HybridRetriever
 from opspilot.tools.base import ReadOnlyTool
@@ -26,6 +29,7 @@ from opspilot.tools.operational import OperationalFixtureStore, build_operationa
 from opspilot.tools.retrieval import RunbookSearchTool
 
 _MODEL_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:-]{1,127}$")
+ProviderName = Literal["openai", "gemini"]
 
 
 def _decimal(raw: str) -> Decimal:
@@ -41,11 +45,16 @@ def _decimal(raw: str) -> Decimal:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run an opt-in, budget-capped OpsPilot evaluation against the OpenAI "
-            "Responses API. This command can spend API credits."
+            "Run an opt-in, budget-capped OpsPilot evaluation against an explicit "
+            "model provider. This command contacts an external API."
         )
     )
     parser.add_argument("--confirm-live-api", action="store_true")
+    parser.add_argument(
+        "--provider",
+        choices=("openai", "gemini"),
+        default=os.getenv("OPSPILOT_LIVE_EVAL_PROVIDER", "gemini"),
+    )
     parser.add_argument(
         "--dataset",
         type=Path,
@@ -64,7 +73,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=os.getenv("OPSPILOT_LIVE_EVAL_MODEL", "gpt-5.6"),
+        default=os.getenv("OPSPILOT_LIVE_EVAL_MODEL", "gemini-3.6-flash"),
     )
     parser.add_argument("--max-cases", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
@@ -89,26 +98,60 @@ def _parse_args() -> argparse.Namespace:
 def validate_live_execution(
     *,
     confirmed: bool,
+    provider: ProviderName,
     api_key_present: bool,
     model: str,
     max_cases: int,
 ) -> None:
     if not confirmed:
-        raise ValueError("--confirm-live-api is required because this command spends API credits")
+        raise ValueError(
+            "--confirm-live-api is required because this command contacts an external API"
+        )
     if not api_key_present:
-        raise ValueError("OPENAI_API_KEY is required in the runtime environment")
+        raise ValueError(
+            f"{provider_secret_name(provider)} is required in the runtime environment"
+        )
     if not _MODEL_NAME.fullmatch(model):
         raise ValueError("model name is invalid")
+    if provider == "gemini" and not model.startswith("gemini-"):
+        raise ValueError("Gemini provider requires a gemini-* model")
+    if provider == "openai" and model.startswith("gemini-"):
+        raise ValueError("OpenAI provider cannot use a Gemini model")
     if max_cases < 1 or max_cases > 10:
         raise ValueError("max cases must be between 1 and 10")
 
 
+def provider_secret_name(provider: ProviderName) -> str:
+    return "GEMINI_API_KEY" if provider == "gemini" else "OPENAI_API_KEY"
+
+
+def build_live_gateway(
+    provider: ProviderName,
+    *,
+    model: str,
+    timeout_seconds: float,
+    max_output_tokens: int,
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None,
+) -> InvestigationModelGateway:
+    gateway_type = (
+        GeminiInvestigationGateway if provider == "gemini" else OpenAIInvestigationGateway
+    )
+    return gateway_type(
+        model,
+        timeout_seconds=timeout_seconds,
+        max_output_tokens=max_output_tokens,
+        reasoning_effort=reasoning_effort,
+    )
+
+
 def main() -> None:
     args = _parse_args()
+    provider = cast(ProviderName, args.provider)
     try:
         validate_live_execution(
             confirmed=args.confirm_live_api,
-            api_key_present=bool(os.getenv("OPENAI_API_KEY")),
+            provider=provider,
+            api_key_present=bool(os.getenv(provider_secret_name(provider))),
             model=args.model,
             max_cases=args.max_cases,
         )
@@ -137,8 +180,9 @@ def main() -> None:
     evaluation = evaluate_live_cases(
         cases,
         tools=tools,
-        gateway_factory=lambda: OpenAIInvestigationGateway(
-            args.model,
+        gateway_factory=lambda: build_live_gateway(
+            provider,
+            model=args.model,
             timeout_seconds=args.timeout_seconds,
             max_output_tokens=args.max_output_tokens,
             reasoning_effort=args.reasoning_effort,
@@ -148,6 +192,7 @@ def main() -> None:
     )
     report = LiveAgentEvaluationReport(
         generated_at=datetime.now(UTC),
+        requested_provider=provider,
         requested_model=args.model,
         dataset_sha256=dataset_sha256(args.dataset),
         selected_case_ids=[case.case_id for case in cases],

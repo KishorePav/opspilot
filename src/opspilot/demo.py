@@ -72,7 +72,7 @@ def create_demo_app(
 
     app = FastAPI(
         title="OpsPilot Synthetic Demo",
-        version="0.7.0",
+        version="0.8.0",
         description=(
             "Credential-free, read-only replay of one allowlisted synthetic incident. "
             "This application exposes no arbitrary prompt or remediation endpoint."

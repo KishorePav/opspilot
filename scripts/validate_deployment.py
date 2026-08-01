@@ -31,6 +31,7 @@ def validate() -> dict[str, object]:
     hpa = _yaml(_BASE / "hpa.yaml")
     collector = _yaml(Path("deploy/observability/otel-collector.yaml"))
     rules = _yaml(Path("deploy/observability/prometheus-rules.yaml"))
+    live_workflow = _yaml(Path(".github/workflows/live-evaluation.yml"))
     dashboard = json.loads(
         Path("deploy/observability/grafana-dashboard.json").read_text(encoding="utf-8")
     )
@@ -72,11 +73,23 @@ def validate() -> dict[str, object]:
     } <= alert_names
     assert len(dashboard["panels"]) >= 6
 
+    live_job = live_workflow["jobs"]["evaluate"]
+    live_env = live_job["env"]
+    assert live_workflow["permissions"] == {"contents": "read"}
+    assert {"GEMINI_API_KEY", "OPENAI_API_KEY", "LIVE_PROVIDER", "LIVE_MODEL"} <= set(
+        live_env
+    )
+    live_steps = live_job["steps"]
+    live_command = _named(live_steps, "Run the bounded live evaluation")["run"]
+    assert "--provider" in live_command
+    assert "--model" in live_command
+
     return {
         "container_image": image,
         "replicas": spec["replicas"],
         "alerts": sorted(alert_names),
         "dashboard_panels": len(dashboard["panels"]),
+        "live_providers": ["gemini", "openai"],
         "status": "passed",
     }
 

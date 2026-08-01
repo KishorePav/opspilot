@@ -6,10 +6,10 @@ no database, identity provider, OpenAI credential, or outbound integration.
 Build and verify it:
 
 ```bash
-docker build --target demo -t opspilot-demo:0.7.0 .
+docker build --target demo -t opspilot-demo:0.8.0 .
 docker run --rm -p 8081:8080 --read-only \
   --cap-drop ALL --security-opt no-new-privileges \
-  opspilot-demo:0.7.0
+  opspilot-demo:0.8.0
 curl --fail http://127.0.0.1:8081/api/scenarios
 ```
 

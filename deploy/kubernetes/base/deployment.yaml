@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate
-          image: ghcr.io/kishorepav/opspilot:0.7.0
+          image: ghcr.io/kishorepav/opspilot:0.8.0
           imagePullPolicy: IfNotPresent
           command: ["python", "scripts/migrate.py"]
           envFrom:
@@ -50,7 +50,7 @@ spec:
               memory: 256Mi
       containers:
         - name: api
-          image: ghcr.io/kishorepav/opspilot:0.7.0
+          image: ghcr.io/kishorepav/opspilot:0.8.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

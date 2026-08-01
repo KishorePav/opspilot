@@ -69,7 +69,9 @@ class IncidentInvestigator:
                         tools=tuple(tool.spec for tool in self._tools.values()),
                     )
                 except ModelGatewayError as exc:
-                    raise InvestigationFailedError("model_gateway_failed") from exc
+                    failure = InvestigationFailedError("model_gateway_failed")
+                    failure.attach_provider_diagnostic(exc.diagnostic)
+                    raise failure from exc
                 if turn.usage is not None:
                     usage_records.append(turn.usage)
                     if sum(item.total_tokens for item in usage_records) > self._max_total_tokens:

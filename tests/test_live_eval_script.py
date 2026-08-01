@@ -22,15 +22,17 @@ class LiveEvaluationScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "confirm-live-api"):
             module.validate_live_execution(
                 confirmed=False,
+                provider="gemini",
                 api_key_present=True,
-                model="gpt-5.6",
+                model="gemini-3.6-flash",
                 max_cases=1,
             )
-        with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
+        with self.assertRaisesRegex(ValueError, "GEMINI_API_KEY"):
             module.validate_live_execution(
                 confirmed=True,
+                provider="gemini",
                 api_key_present=False,
-                model="gpt-5.6",
+                model="gemini-3.6-flash",
                 max_cases=1,
             )
 
@@ -40,6 +42,7 @@ class LiveEvaluationScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model name"):
             module.validate_live_execution(
                 confirmed=True,
+                provider="openai",
                 api_key_present=True,
                 model="gpt-5.6; echo unsafe",
                 max_cases=1,
@@ -47,9 +50,30 @@ class LiveEvaluationScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "max cases"):
             module.validate_live_execution(
                 confirmed=True,
+                provider="openai",
                 api_key_present=True,
                 model="gpt-5.6",
                 max_cases=11,
+            )
+
+    def test_live_execution_rejects_provider_model_mismatches(self) -> None:
+        module = _load_script()
+
+        with self.assertRaisesRegex(ValueError, "Gemini provider"):
+            module.validate_live_execution(
+                confirmed=True,
+                provider="gemini",
+                api_key_present=True,
+                model="gpt-5.6",
+                max_cases=1,
+            )
+        with self.assertRaisesRegex(ValueError, "OpenAI provider"):
+            module.validate_live_execution(
+                confirmed=True,
+                provider="openai",
+                api_key_present=True,
+                model="gemini-3.6-flash",
+                max_cases=1,
             )
 
 

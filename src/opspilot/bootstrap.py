@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from opspilot.adapters.gemini_investigation import GeminiInvestigationGateway
 from opspilot.adapters.openai_investigation import (
     DisabledInvestigationGateway,
     OpenAIInvestigationGateway,
@@ -64,6 +65,13 @@ def build_investigator(
 ) -> IncidentInvestigator:
     if settings.investigation_provider == "openai":
         gateway: InvestigationModelGateway = OpenAIInvestigationGateway(
+            settings.investigation_model,
+            timeout_seconds=settings.investigation_timeout_seconds,
+            max_output_tokens=settings.investigation_max_output_tokens,
+            reasoning_effort=settings.investigation_reasoning_effort,
+        )
+    elif settings.investigation_provider == "gemini":
+        gateway = GeminiInvestigationGateway(
             settings.investigation_model,
             timeout_seconds=settings.investigation_timeout_seconds,
             max_output_tokens=settings.investigation_max_output_tokens,
@@ -135,6 +143,6 @@ def build_telemetry(settings: Settings) -> Observability:
     return build_observability(
         exporter=settings.telemetry_exporter,
         endpoint=settings.otlp_endpoint,
-        service_version="0.7.0",
+        service_version="0.8.0",
         environment=settings.environment,
     )

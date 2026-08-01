@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "opspilot"
-version = "0.7.0"
+version = "0.8.0"
 description = "Evidence-first production incident investigation reference implementation"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 authors = [{ name = "Kishore Choudhury" }]
 dependencies = [
   "fastapi>=0.116,<1",
+  "google-genai>=1.60,<2",
   "openai>=2,<3",
   "opentelemetry-api>=1.34,<2",
   "opentelemetry-exporter-otlp-proto-http>=1.34,<2",

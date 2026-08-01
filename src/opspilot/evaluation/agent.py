@@ -16,6 +16,7 @@ from opspilot.investigation.failures import (
 from opspilot.investigation.gateway import (
     InvestigationModelGateway,
     ModelGatewayError,
+    ProviderDiagnostic,
 )
 from opspilot.investigation.models import (
     DiagnosisReport,
@@ -130,6 +131,7 @@ class CaseEvaluation(EvalModel):
     evidence: list[EvidenceItem]
     trace: list[ToolTrace]
     usage: UsageSummary
+    provider_diagnostic: ProviderDiagnostic | None = None
     duration_ms: int | None = Field(default=None, ge=0)
 
 
@@ -416,6 +418,9 @@ class AgentEvaluator:
             evidence=evidence,
             trace=trace,
             usage=usage,
+            provider_diagnostic=(
+                failure.provider_diagnostic if failure is not None else None
+            ),
         )
 
 

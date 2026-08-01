@@ -71,6 +71,20 @@ class SettingsTests(unittest.TestCase):
         ), self.assertRaisesRegex(ValueError, "reasoning effort"):
             Settings.from_environment()
 
+    def test_gemini_is_an_explicit_investigation_provider(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "OPSPILOT_INVESTIGATION_PROVIDER": "gemini",
+                "OPSPILOT_INVESTIGATION_MODEL": "gemini-3.6-flash",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_environment()
+
+        self.assertEqual("gemini", settings.investigation_provider)
+        self.assertEqual("gemini-3.6-flash", settings.investigation_model)
+
 
 if __name__ == "__main__":
     unittest.main()

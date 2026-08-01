@@ -58,8 +58,10 @@ class Settings:
             raise ValueError("database pool minimum size must be positive")
         if self.database_pool_max_size < self.database_pool_min_size:
             raise ValueError("database pool maximum must be at least its minimum")
-        if self.investigation_provider not in {"disabled", "openai"}:
-            raise ValueError("investigation provider must be 'disabled' or 'openai'")
+        if self.investigation_provider not in {"disabled", "openai", "gemini"}:
+            raise ValueError(
+                "investigation provider must be 'disabled', 'openai', or 'gemini'"
+            )
         if not self.investigation_model.strip():
             raise ValueError("investigation model must not be empty")
         if (

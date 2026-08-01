@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from time import perf_counter
+from typing import Literal
 
 from pydantic import Field
 
@@ -44,6 +45,7 @@ class LiveEvaluationThresholds(EvalModel):
 
 class LiveAgentEvaluationReport(EvalModel):
     generated_at: datetime
+    requested_provider: Literal["openai", "gemini"]
     requested_model: str
     dataset_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     selected_case_ids: list[str]

@@ -262,7 +262,7 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         decision_schema = schema["components"]["schemas"]["ProposalDecisionRequest"]
         execution_schema = schema["components"]["schemas"]["ExecutionRequest"]
 
-        self.assertEqual("0.7.0", schema["info"]["version"])
+        self.assertEqual("0.8.0", schema["info"]["version"])
         self.assertIn("HTTPBearer", schema["components"]["securitySchemes"])
         self.assertEqual({"incident"}, set(durable_schema["properties"]))
         self.assertEqual({"action"}, set(proposal_schema["properties"]))
