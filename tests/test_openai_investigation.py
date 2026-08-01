@@ -18,6 +18,14 @@ class FakeResponses:
         self.arguments = kwargs
         return SimpleNamespace(
             status="completed",
+            model="gpt-5.6",
+            usage=SimpleNamespace(
+                input_tokens=120,
+                input_tokens_details=SimpleNamespace(cached_tokens=20),
+                output_tokens=30,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=10),
+                total_tokens=150,
+            ),
             output=[
                 SimpleNamespace(
                     type="function_call",
@@ -76,6 +84,10 @@ class OpenAIInvestigationGatewayTests(unittest.TestCase):
 
         self.assertEqual("search_logs", turn.tool_calls[0].name)
         self.assertEqual("dataflow-worker", turn.tool_calls[0].arguments["service"])
+        self.assertIsNotNone(turn.usage)
+        assert turn.usage is not None
+        self.assertEqual(150, turn.usage.total_tokens)
+        self.assertEqual(20, turn.usage.cached_input_tokens)
         self.assertIsNotNone(client.responses.arguments)
         assert client.responses.arguments is not None
         self.assertEqual("required", client.responses.arguments["tool_choice"])

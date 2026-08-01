@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
+
+
+def _optional_decimal(name: str) -> Decimal | None:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return None
+    return Decimal(raw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +30,10 @@ class Settings:
     investigation_max_rounds: int
     investigation_max_tool_calls: int
     investigation_max_evidence_items: int
+    pricing_version: str | None
+    input_usd_per_million: Decimal | None
+    cached_input_usd_per_million: Decimal | None
+    output_usd_per_million: Decimal | None
 
     def __post_init__(self) -> None:
         if self.retrieval_backend not in {"memory", "postgres"}:
@@ -42,6 +54,18 @@ class Settings:
             self.investigation_max_evidence_items,
         ) < 1:
             raise ValueError("investigation budgets must be positive")
+        pricing_values = (
+            self.input_usd_per_million,
+            self.cached_input_usd_per_million,
+            self.output_usd_per_million,
+        )
+        configured_rates = sum(value is not None for value in pricing_values)
+        if configured_rates not in {0, len(pricing_values)}:
+            raise ValueError("all model pricing rates must be configured together")
+        if configured_rates and not self.pricing_version:
+            raise ValueError("configured model pricing requires a pricing version")
+        if any(value is not None and value < 0 for value in pricing_values):
+            raise ValueError("model pricing rates cannot be negative")
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -78,5 +102,15 @@ class Settings:
             ),
             investigation_max_evidence_items=int(
                 os.getenv("OPSPILOT_INVESTIGATION_MAX_EVIDENCE_ITEMS", "40")
+            ),
+            pricing_version=os.getenv("OPSPILOT_PRICING_VERSION") or None,
+            input_usd_per_million=_optional_decimal(
+                "OPSPILOT_INPUT_USD_PER_MILLION"
+            ),
+            cached_input_usd_per_million=_optional_decimal(
+                "OPSPILOT_CACHED_INPUT_USD_PER_MILLION"
+            ),
+            output_usd_per_million=_optional_decimal(
+                "OPSPILOT_OUTPUT_USD_PER_MILLION"
             ),
         )

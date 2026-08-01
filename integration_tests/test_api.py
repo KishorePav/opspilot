@@ -10,6 +10,7 @@ from opspilot.investigation.models import (
     EvidenceItem,
     IncidentRequest,
     ModelTurn,
+    ToolCall,
     ToolTrace,
 )
 from opspilot.investigation.orchestrator import IncidentInvestigator
@@ -40,6 +41,28 @@ class InsufficientEvidenceGateway:
                 next_actions=[],
                 unanswered_questions=["Which read-only evidence source should be queried?"],
             ),
+        )
+
+
+class RepeatingGateway:
+    def next_turn(
+        self,
+        request: IncidentRequest,
+        *,
+        evidence: Sequence[EvidenceItem],
+        trace: Sequence[ToolTrace],
+        tools: Sequence[ToolSpec],
+    ) -> ModelTurn:
+        del request, evidence, trace, tools
+        return ModelTurn(
+            tool_calls=[
+                ToolCall(
+                    call_id="repeat",
+                    name="search_logs",
+                    arguments={"service": "dataflow-worker"},
+                )
+            ],
+            report=None,
         )
 
 
@@ -113,6 +136,38 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("insufficient_evidence", payload["report"]["status"])
         self.assertEqual([], payload["evidence"])
         self.assertEqual([], payload["trace"])
+        self.assertEqual(1, payload["usage"]["model_calls"])
+        self.assertEqual(0, payload["usage"]["total_tokens"])
+
+    async def test_investigation_failure_returns_typed_public_detail(self) -> None:
+        failing = IncidentInvestigator(RepeatingGateway(), [])
+
+        def override_investigator() -> IncidentInvestigator:
+            return failing
+
+        self.app.dependency_overrides[get_investigator] = override_investigator
+        response = await self.client.post(
+            "/v1/investigate",
+            json={
+                "incident_id": "inc-dataflow-042",
+                "summary": "Workers cannot start",
+                "environment": "synthetic",
+                "started_at": "2026-08-01T10:00:00Z",
+                "ended_at": "2026-08-01T10:15:00Z",
+                "services": ["dataflow-worker"],
+            },
+        )
+
+        self.assertEqual(503, response.status_code)
+        self.assertEqual(
+            {
+                "code": "duplicate_tool_call",
+                "category": "safety_policy",
+                "retryable": False,
+                "message": "The investigation repeated an identical tool call.",
+            },
+            response.json()["detail"],
+        )
 
 
 if __name__ == "__main__":
