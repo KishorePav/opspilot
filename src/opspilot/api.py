@@ -4,12 +4,18 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from opspilot.bootstrap import build_retriever
+from opspilot.bootstrap import build_investigator, build_retriever
 from opspilot.config import Settings
+from opspilot.investigation.models import IncidentRequest, InvestigationResult
+from opspilot.investigation.orchestrator import (
+    IncidentInvestigator,
+    InvestigationFailedError,
+)
 from opspilot.retrieval.base import (
     ClosableRetriever,
     EvidenceRetriever,
@@ -59,9 +65,16 @@ def get_retriever() -> EvidenceRetriever:
     return build_retriever(Settings.from_environment())
 
 
+@lru_cache(maxsize=1)
+def get_investigator() -> IncidentInvestigator:
+    settings = Settings.from_environment()
+    return build_investigator(settings, get_retriever())
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
+    get_investigator.cache_clear()
     if get_retriever.cache_info().currsize:
         retriever = get_retriever()
         if isinstance(retriever, ClosableRetriever):
@@ -70,7 +83,7 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="OpsPilot Retrieval API", version="0.2.0", lifespan=_lifespan)
+    app = FastAPI(title="OpsPilot Investigation API", version="0.3.0", lifespan=_lifespan)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -104,5 +117,15 @@ def create_app() -> FastAPI:
             for hit in hits
         ]
         return RetrievalResponse(query=request.query, evidence=evidence)
+
+    @app.post("/v1/investigate", response_model=InvestigationResult)
+    def investigate(
+        request: IncidentRequest,
+        investigator: Annotated[IncidentInvestigator, Depends(get_investigator)],
+    ) -> InvestigationResult:
+        try:
+            return investigator.investigate(request)
+        except InvestigationFailedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return app

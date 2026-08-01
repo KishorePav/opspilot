@@ -10,7 +10,7 @@ client deployment.
 
 ## Current status
 
-**Milestone 2 — persistence-backed hybrid retrieval.**
+**Milestone 3 — bounded single-agent incident investigation.**
 
 The current slice provides:
 
@@ -24,10 +24,16 @@ The current slice provides:
 - database-side full-text and HNSW vector search with metadata pre-filtering;
 - checksum-protected schema migrations and a bounded connection pool;
 - PostgreSQL integration tests and a reproducible latency benchmark;
+- one provider-independent investigator loop with typed read-only tools;
+- bounded runbook, log, deployment, and metric evidence collection;
+- Pydantic-validated diagnoses with ranked hypotheses and cited root causes;
+- evidence-ledger validation that rejects invented citations;
+- scope, duplicate-call, round, tool-call, and evidence budgets;
+- a Responses API adapter with strict function schemas;
 - unit tests and an offline CI quality gate that does not require an API key.
 
-Agent orchestration, evidence synthesis, guardrails, approvals, and tracing are
-deliberately separate milestones.
+Prompt-injection evaluation, trace grading, durable agent state, approvals, and
+production observability are deliberately separate milestones.
 
 ## Why this project exists
 
@@ -53,7 +59,9 @@ flowchart TD
     E --> G[Rank fusion]
     F --> G
     G --> H[Evidence bundle]
-    H --> I[Agent investigation - next milestone]
+    H --> I[Bounded investigator]
+    K[Read-only operational tools] --> I
+    I --> L[Evidence-cited report]
     I --> J[Human approval - future milestone]
 ```
 
@@ -131,6 +139,38 @@ corpus and writes a JSON artifact with indexing time, p50/p95/p99 latency, and
 throughput. It is an environment-specific baseline, not a production-scale
 claim. See [the benchmark contract](docs/benchmarks/pgvector.md).
 
+## Run the investigator
+
+The default configuration disables live generation so offline commands never
+consume API credits accidentally. To enable the OpenAI adapter, configure the
+provider and model in the server environment, then start the API:
+
+```bash
+export OPSPILOT_INVESTIGATION_PROVIDER=openai
+export OPSPILOT_INVESTIGATION_MODEL=gpt-5.6
+uvicorn opspilot.main:app --reload
+```
+
+The OpenAI SDK reads its credential from the server environment. Never place a
+key in this repository. Submit a bounded synthetic investigation:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/investigate \
+  -H 'content-type: application/json' \
+  -d '{
+    "incident_id":"inc-dataflow-042",
+    "summary":"Dataflow workers cannot start after the latest release",
+    "environment":"synthetic",
+    "started_at":"2026-08-01T10:00:00Z",
+    "ended_at":"2026-08-01T10:15:00Z",
+    "services":["dataflow-worker"]
+  }'
+```
+
+The checked-in operational fixture deliberately contains an instruction-like
+log payload. It remains evidence data: it cannot add tools, change scope, or
+authorize remediation.
+
 ## Evidence, not activity theatre
 
 The repository uses milestone branches and reviewable pull requests. Commits
@@ -145,9 +185,10 @@ and [the evidence policy](docs/engineering-evidence.md).
 ## Repository map
 
 ```text
-src/opspilot/       Retrieval domain, PostgreSQL adapter, evaluation, and API
+src/opspilot/       Retrieval, typed tools, investigator, adapters, and API
 tests/              Deterministic unit and acceptance tests
 fixtures/runbooks/  Synthetic operational runbooks used by the demo
+fixtures/operations Synthetic logs, deployments, and metrics used by the agent
 evals/              Versioned golden-query datasets
 migrations/         PostgreSQL and pgvector schema
 docs/               Architecture, ADRs, roadmap, and evidence policy
@@ -159,3 +200,6 @@ The checked-in corpus is synthetic. Never ingest employer data, credentials,
 private incident records, or customer information into this public project.
 No remediation tool will be enabled without a least-privilege design, audit
 trail, dry-run behavior, and a human approval interruption.
+
+See [ADR 0003](docs/adr/0003-bounded-single-investigator.md) for the agent-loop
+decision, security boundaries, alternatives, and known limitations.
