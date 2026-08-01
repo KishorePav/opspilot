@@ -33,6 +33,14 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("dataflow-permission-denied", payload["evidence"][0]["document_id"])
         self.assertTrue(payload["evidence"][0]["chunk_id"])
         self.assertTrue(payload["evidence"][0]["source"].endswith(".md"))
+        self.assertEqual("synthetic", payload["evidence"][0]["metadata"]["environment"])
+
+    async def test_rejects_invalid_filter_keys(self) -> None:
+        response = await self.client.post(
+            "/v1/retrieve",
+            json={"query": "database latency", "filters": {"unsafe key": "value"}},
+        )
+        self.assertEqual(422, response.status_code)
 
 
 if __name__ == "__main__":
