@@ -10,7 +10,7 @@ test-api:
 	$(PYTHON) -m unittest discover -s integration_tests -v
 
 test-db:
-	$(PYTHON) -m unittest integration_tests.test_postgres_retrieval -v
+	$(PYTHON) -m unittest discover -s integration_tests -p 'test_postgres_*.py' -v
 
 lint:
 	$(PYTHON) -m ruff check .

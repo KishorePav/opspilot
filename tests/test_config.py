@@ -33,6 +33,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual("provider-card-2026-08-01", settings.pricing_version)
         self.assertEqual(Decimal("1.00"), settings.input_usd_per_million)
 
+    def test_approval_ttl_is_bounded(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPSPILOT_APPROVAL_TTL_SECONDS": "3601"},
+            clear=True,
+        ), self.assertRaisesRegex(ValueError, "approval TTL"):
+            Settings.from_environment()
+
 
 if __name__ == "__main__":
     unittest.main()

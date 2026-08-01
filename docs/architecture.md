@@ -48,6 +48,19 @@ total token fields. Dollar cost remains optional: the estimator operates only
 with an explicit model, three rates, and version label. Checked-in evaluation
 rates are intentionally synthetic and cannot be presented as provider pricing.
 
+Milestone 5 adds a durable workflow after the investigator, not a write tool
+inside it. A completed diagnosis can produce a typed remediation proposal only
+when the service, environment, and cited evidence remain inside the original
+incident. The executor first returns a side-effect-free preview. OpsPilot then
+hashes the canonical plan and persists that digest with the proposal.
+
+A different human actor must approve the exact digest before its short expiry.
+PostgreSQL locks the proposal, recomputes the digest, verifies the decision, and
+creates one execution claim and audit event in a single transaction. A unique
+idempotency key and one-execution-per-proposal constraint prevent duplicate
+side effects across retries or process restarts. Audit events form a per-run
+SHA-256 chain and database triggers reject row updates and deletes.
+
 ## Component responsibilities
 
 | Component | Responsibility | Must not do |
@@ -68,6 +81,11 @@ rates are intentionally synthetic and cannot be presented as provider pricing.
 | Operational adapter | Perform bounded read queries | Expand incident scope or mutate systems |
 | Usage accounting | Normalize provider tokens and apply explicit versioned rates | Guess current pricing |
 | Failure taxonomy | Classify sanitized terminal and trace errors | Expose provider or internal exception text |
+| Workflow service | Enforce scope, evidence, separation of duties, expiry, and audit verification | Trust model output or request text as approval |
+| Workflow store | Persist state and apply atomic transitions | Execute remediation or weaken policy |
+| Human decision | Approve or reject one immutable plan digest | Approve changed or expired plans |
+| Remediation executor | Preview and execute one registered action | Expose shell, generic HTTP, SQL, or model access |
+| Audit chain | Make workflow history tamper-evident and append-only | Authorize an action by itself |
 
 ## Planned production flow
 
@@ -81,7 +99,12 @@ rates are intentionally synthetic and cannot be presented as provider pricing.
 8. A structured report is accepted only when every cited ID exists in the ledger.
 9. Evaluation and tracing record retrieval, tool, citation, safety, latency,
    token, cost-policy, and outcome signals.
-10. Any remediation request interrupts execution for human approval.
+10. A human-authored typed proposal cites evidence from the completed diagnosis.
+11. A dry run produces a preview without side effects and the plan is hashed.
+12. A separate human approves or rejects that exact digest before expiry.
+13. PostgreSQL atomically claims one idempotent execution for the proposal.
+14. The bounded executor records the outcome and each transition extends the
+    tamper-evident audit chain.
 
 ## Failure and consistency behavior
 
@@ -103,6 +126,14 @@ rates are intentionally synthetic and cannot be presented as provider pricing.
   responses expose only the sanitized subset.
 - Evaluation cases may intentionally trigger a forbidden tool request. Passing
   requires that the unregistered call is observable and never succeeds.
+- Changed plan data cannot reuse an earlier decision because the digest is
+  recomputed inside the locked approval and execution transitions.
+- Rejected, unapproved, expired, self-approved, out-of-scope, and uncited plans
+  fail before the executor is invoked.
+- A repeated idempotency key returns the stored terminal execution; a different
+  key for the same proposal fails instead of creating another action.
+- Audit verification fails on missing, reordered, reparented, or modified
+  events. Audit rows reject application-level updates and deletes.
 
 ## Trust boundaries
 
@@ -113,3 +144,9 @@ receive narrowly scoped identities. Public fixtures are synthetic.
 The current operational source is a synthetic JSON fixture. Production log,
 deployment, and metric adapters still require authentication, RBAC or tenant
 enforcement, timeouts, pagination, and provider-specific availability handling.
+
+The remediation executor is also synthetic and only accepts the `synthetic`
+environment. Actor objects demonstrate the authorization contract but are not
+yet bound to authenticated principals. Production execution also requires a
+least-privilege provider identity, policy-backed RBAC, timeout and retry rules,
+and recovery of claims abandoned while an executor process is unavailable.

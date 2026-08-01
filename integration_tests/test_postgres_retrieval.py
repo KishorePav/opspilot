@@ -117,6 +117,7 @@ class PostgresHybridRetrieverTests(unittest.TestCase):
         result = apply_migrations(_DATABASE_URL, Path("migrations"))
         self.assertEqual((), result.applied)
         self.assertIn("0001_retrieval_schema", result.already_applied)
+        self.assertIn("0002_remediation_workflow", result.already_applied)
 
         with tempfile.TemporaryDirectory() as directory:
             changed = Path(directory) / "0001_retrieval_schema.sql"
