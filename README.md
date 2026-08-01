@@ -11,7 +11,7 @@ client deployment.
 
 ## Current status
 
-**Milestone 5 — durable, approval-gated remediation workflow.**
+**Milestone 6 — authenticated and observable production-operations reference.**
 
 The current slice provides:
 
@@ -46,11 +46,23 @@ The current slice provides:
 - atomic PostgreSQL execution claims and persistent idempotency keys;
 - an append-only, hash-chained audit trail with integrity verification;
 - a bounded synthetic restart executor that cannot reach external systems;
+- OIDC/JWKS token verification with fixed asymmetric algorithms, issuer,
+  audience, expiry, subject, tenant, actor-type, and role validation;
+- server-derived actors, endpoint RBAC, and tenant-scoped workflow access;
+- expiring execution leases with retries, fencing tokens, and stale-worker
+  rejection;
+- bounded OpenTelemetry traces and metrics that exclude incident content,
+  evidence, identities, tenants, prompts, tokens, and credentials;
+- liveness/readiness probes, SLO recording rules, alerts, and a Grafana
+  dashboard;
+- a non-root, read-only container and Restricted-profile Kubernetes reference;
+- CI validation for deployment invariants and a container liveness smoke test;
 - unit tests and an offline CI quality gate that does not require an API key.
 
-Authenticated RBAC, a real least-privilege remediation provider, abandoned-claim
-recovery, live-model quality baselines, and production observability are
-deliberately separate from this milestone.
+A real least-privilege remediation provider, production identity-provider
+configuration, live-model quality baselines, workload-specific egress policy,
+and a measured production SLO history remain deliberately outside the claims of
+this public reference implementation.
 
 ## Why this project exists
 
@@ -79,10 +91,12 @@ flowchart TD
     H --> I[Bounded investigator]
     K[Read-only operational tools] --> I
     I --> L[Evidence-cited report]
+    P[OIDC identity and RBAC] --> M
     L --> M[(Durable workflow state)]
     M --> J[Human approval]
     J --> N[Synthetic executor]
     M --> O[Hash-chained audit]
+    M --> Q[Bounded OpenTelemetry]
 ```
 
 The offline test harness and PostgreSQL benchmark use a deterministic hash
@@ -100,12 +114,18 @@ make test
 make eval
 ```
 
-To run the API after installing the application dependencies:
+To run the API after installing the application dependencies, configure an
+OIDC provider first. Every `/v1` route fails closed without a verified bearer
+token; `/health` and `/livez` remain unauthenticated process probes.
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
+export OPSPILOT_AUTH_JWKS_URL='https://identity.example.com/.well-known/jwks.json'
+export OPSPILOT_AUTH_ISSUER='https://identity.example.com/'
+export OPSPILOT_AUTH_AUDIENCE='opspilot-api'
+export ACCESS_TOKEN='token-issued-by-that-provider'
 uvicorn opspilot.main:app --reload
 ```
 
@@ -113,6 +133,7 @@ Then retrieve evidence:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/retrieve \
+  -H "authorization: Bearer ${ACCESS_TOKEN}" \
   -H 'content-type: application/json' \
   -d '{"query":"Dataflow cannot act as the worker service account","top_k":3}'
 ```
@@ -138,6 +159,7 @@ lexical and vector candidate sets before reciprocal-rank fusion:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/retrieve \
+  -H "authorization: Bearer ${ACCESS_TOKEN}" \
   -H 'content-type: application/json' \
   -d '{
     "query":"database connection exhaustion",
@@ -176,6 +198,7 @@ key in this repository. Submit a bounded synthetic investigation:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/investigate \
+  -H "authorization: Bearer ${ACCESS_TOKEN}" \
   -H 'content-type: application/json' \
   -d '{
     "incident_id":"inc-dataflow-042",
@@ -211,16 +234,43 @@ The lifecycle is deliberately separate from the direct read-only endpoint:
    that exact digest. Approval must come from a different human actor and
    expires after 15 minutes by default.
 4. `POST /v1/remediation-proposals/{proposal_id}/executions` requires an
-   idempotency key. Replaying the same key returns the stored result without
-   invoking the executor again; a conflicting key fails closed.
+   idempotency key. The claim receives an expiring lease and fencing token.
+   Replaying a terminal key returns the stored result; an expired claim can be
+   recovered, while its stale worker can no longer commit.
 5. `GET /v1/investigations/{run_id}/audit-events` returns the verified audit
    chain.
 
 The checked-in executor records only a simulated `restart_deployment` action in
 the `synthetic` environment. It has no Kubernetes, cloud, shell, generic HTTP,
-or employer-system access. Request actors are structured but not authenticated;
-a production adapter must derive them from server-side identity and RBAC rather
-than trust request JSON.
+or employer-system access. Request bodies cannot supply actors: identity,
+human/service type, tenant, and roles are derived from the verified token.
+
+## Deploy and observe the reference
+
+Build and smoke-test the image locally:
+
+```bash
+docker build -t opspilot:0.6.0 .
+docker run --rm -p 8080:8080 opspilot:0.6.0
+curl --fail http://127.0.0.1:8080/livez
+```
+
+The Kubernetes base expects an externally managed `opspilot-runtime` Secret
+containing `DATABASE_URL`, `OPENAI_API_KEY`, `OPSPILOT_AUTH_JWKS_URL`,
+`OPSPILOT_AUTH_ISSUER`, and `OPSPILOT_AUTH_AUDIENCE`. No secret manifest or
+credential is checked in. Render it only after replacing the example image and
+reviewing the cluster-specific ingress, database, identity-provider, OpenAI,
+and trace-backend egress paths:
+
+```bash
+kubectl kustomize deploy/kubernetes/base
+make validate-deploy
+```
+
+OTLP/HTTP export is enabled with `OPSPILOT_TELEMETRY_EXPORTER=otlp` and
+`OPSPILOT_OTLP_ENDPOINT`. The collector configuration removes authorization and
+end-user attributes defensively, exposes metrics for Prometheus, and forwards
+traces to a configured backend. See [the SLO contract](docs/slo.md).
 
 This pause-before-side-effects boundary follows current OpenAI guidance on
 [guardrails and human review](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals).
@@ -280,6 +330,7 @@ fixtures/runbooks/  Synthetic operational runbooks used by the demo
 fixtures/operations Synthetic logs, deployments, and metrics used by the agent
 evals/              Versioned retrieval and agent datasets plus thresholds
 migrations/         PostgreSQL and pgvector schema
+deploy/             Hardened Kubernetes, collector, alerts, and dashboard
 docs/               Architecture, ADRs, roadmap, and evidence policy
 ```
 
@@ -294,4 +345,6 @@ and audit trail without reaching an external system.
 See [ADR 0003](docs/adr/0003-bounded-single-investigator.md) for the agent-loop
 decision and [ADR 0004](docs/adr/0004-replayable-agent-evaluation.md) for the
 evaluation design. See [ADR 0005](docs/adr/0005-digest-bound-human-approval.md)
-for the durable approval and idempotency decision.
+for the durable approval and idempotency decision and
+[ADR 0006](docs/adr/0006-authenticated-fenced-production-operations.md) for
+identity, tenancy, leases, and telemetry.

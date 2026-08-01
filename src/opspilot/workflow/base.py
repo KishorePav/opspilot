@@ -22,6 +22,7 @@ from opspilot.workflow.models import (
 class ExecutionClaim:
     execution: RemediationExecution
     claimed: bool
+    recovered: bool = False
 
 
 class WorkflowStore(Protocol):
@@ -47,6 +48,8 @@ class WorkflowStore(Protocol):
         *,
         idempotency_key: str,
         requested_by: Actor,
+        lease_owner: str,
+        lease_expires_at: datetime,
         now: datetime,
     ) -> ExecutionClaim: ...
 
@@ -55,6 +58,8 @@ class WorkflowStore(Protocol):
         execution_id: str,
         outcome: RemediationOutcome,
         *,
+        lease_owner: str,
+        fencing_token: int,
         now: datetime,
     ) -> RemediationExecution: ...
 
@@ -63,8 +68,22 @@ class WorkflowStore(Protocol):
         execution_id: str,
         error_code: str,
         *,
+        lease_owner: str,
+        fencing_token: int,
         now: datetime,
     ) -> RemediationExecution: ...
+
+    def renew_execution_lease(
+        self,
+        execution_id: str,
+        *,
+        lease_owner: str,
+        fencing_token: int,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> RemediationExecution: ...
+
+    def is_ready(self) -> bool: ...
 
     def list_audit_events(self, run_id: str) -> list[AuditEvent]: ...
 

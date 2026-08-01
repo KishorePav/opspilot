@@ -76,15 +76,16 @@ class PostgresWorkflowStore:
             connection.execute(
                 """
                 INSERT INTO investigation_runs (
-                    run_id, incident_id, status, request, result, failure,
+                    run_id, tenant_id, incident_id, status, request, result, failure,
                     created_by, created_at, updated_at, version
                 ) VALUES (
-                    %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                    %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
                     %s::jsonb, %s, %s, %s
                 )
                 """,
                 (
                     run.run_id,
+                    run.tenant_id,
                     run.request.incident_id,
                     run.status,
                     _json(run.request),
@@ -189,8 +190,7 @@ class PostgresWorkflowStore:
                 raise WorkflowError("proposal_already_decided")
             if (
                 decision.expected_plan_digest != proposal.plan_digest
-                or remediation_plan_digest(proposal.run_id, proposal.action)
-                != proposal.plan_digest
+                or remediation_plan_digest(proposal.run_id, proposal.action) != proposal.plan_digest
             ):
                 raise WorkflowError("plan_digest_mismatch")
             if decision.decided_by.actor_id == proposal.created_by.actor_id:
@@ -213,9 +213,7 @@ class PostgresWorkflowStore:
                 (status, _json(decision), now, updated.version, proposal_id),
             )
             event_type = (
-                "remediation.approved"
-                if decision.decision == "approve"
-                else "remediation.rejected"
+                "remediation.approved" if decision.decision == "approve" else "remediation.rejected"
             )
             self._append_event(
                 connection,
@@ -227,9 +225,7 @@ class PostgresWorkflowStore:
                     "plan_digest": proposal.plan_digest,
                     "reason": decision.reason,
                     "expires_at": (
-                        decision.expires_at.isoformat()
-                        if decision.expires_at is not None
-                        else None
+                        decision.expires_at.isoformat() if decision.expires_at is not None else None
                     ),
                 },
                 now,
@@ -242,6 +238,8 @@ class PostgresWorkflowStore:
         *,
         idempotency_key: str,
         requested_by: Actor,
+        lease_owner: str,
+        lease_expires_at: datetime,
         now: datetime,
     ) -> ExecutionClaim:
         with self._connection() as connection, connection.transaction():
@@ -261,7 +259,47 @@ class PostgresWorkflowStore:
                 existing = self._execution_from_row(existing_row)
                 if existing.idempotency_key != idempotency_key:
                     raise WorkflowError("idempotency_key_conflict")
-                return ExecutionClaim(existing, claimed=False)
+                if existing.status != "executing" or existing.lease_expires_at > now:
+                    return ExecutionClaim(existing, claimed=False)
+                recovered = existing.model_copy(
+                    update={
+                        "requested_by": requested_by,
+                        "lease_owner": lease_owner,
+                        "lease_expires_at": lease_expires_at,
+                        "fencing_token": existing.fencing_token + 1,
+                        "attempt_count": existing.attempt_count + 1,
+                    }
+                )
+                connection.execute(
+                    """
+                    UPDATE remediation_executions
+                    SET requested_by = %s::jsonb, lease_owner = %s,
+                        lease_expires_at = %s, fencing_token = %s, attempt_count = %s
+                    WHERE execution_id = %s
+                    """,
+                    (
+                        _json(requested_by),
+                        lease_owner,
+                        lease_expires_at,
+                        recovered.fencing_token,
+                        recovered.attempt_count,
+                        recovered.execution_id,
+                    ),
+                )
+                self._append_event(
+                    connection,
+                    existing.run_id,
+                    "remediation.execution_recovered",
+                    requested_by,
+                    {
+                        "proposal_id": existing.proposal_id,
+                        "execution_id": existing.execution_id,
+                        "attempt_count": recovered.attempt_count,
+                        "fencing_token": recovered.fencing_token,
+                    },
+                    now,
+                )
+                return ExecutionClaim(recovered, claimed=True, recovered=True)
             conflicting = connection.execute(
                 "SELECT execution_id FROM remediation_executions WHERE idempotency_key = %s",
                 (idempotency_key,),
@@ -274,8 +312,7 @@ class PostgresWorkflowStore:
                 raise WorkflowError("approval_required")
             if (
                 approval.expected_plan_digest != proposal.plan_digest
-                or remediation_plan_digest(proposal.run_id, proposal.action)
-                != proposal.plan_digest
+                or remediation_plan_digest(proposal.run_id, proposal.action) != proposal.plan_digest
             ):
                 raise WorkflowError("plan_digest_mismatch")
             if approval.expires_at is None or approval.expires_at <= now:
@@ -288,6 +325,10 @@ class PostgresWorkflowStore:
                 idempotency_key=idempotency_key,
                 plan_digest=proposal.plan_digest,
                 requested_by=requested_by,
+                lease_owner=lease_owner,
+                lease_expires_at=lease_expires_at,
+                fencing_token=1,
+                attempt_count=1,
                 status="executing",
                 outcome=None,
                 error_code=None,
@@ -298,8 +339,12 @@ class PostgresWorkflowStore:
                 """
                 INSERT INTO remediation_executions (
                     execution_id, proposal_id, run_id, idempotency_key, plan_digest,
-                    requested_by, status, outcome, error_code, created_at, completed_at
-                ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, 'executing', NULL, NULL, %s, NULL)
+                    requested_by, lease_owner, lease_expires_at, fencing_token, attempt_count,
+                    status, outcome, error_code, created_at, completed_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
+                    'executing', NULL, NULL, %s, NULL
+                )
                 """,
                 (
                     execution.execution_id,
@@ -308,6 +353,10 @@ class PostgresWorkflowStore:
                     execution.idempotency_key,
                     execution.plan_digest,
                     _json(execution.requested_by),
+                    execution.lease_owner,
+                    execution.lease_expires_at,
+                    execution.fencing_token,
+                    execution.attempt_count,
                     execution.created_at,
                 ),
             )
@@ -329,6 +378,8 @@ class PostgresWorkflowStore:
                     "execution_id": execution.execution_id,
                     "idempotency_key": idempotency_key,
                     "plan_digest": proposal.plan_digest,
+                    "attempt_count": execution.attempt_count,
+                    "fencing_token": execution.fencing_token,
                 },
                 now,
             )
@@ -339,6 +390,8 @@ class PostgresWorkflowStore:
         execution_id: str,
         outcome: RemediationOutcome,
         *,
+        lease_owner: str,
+        fencing_token: int,
         now: datetime,
     ) -> RemediationExecution:
         with self._connection() as connection, connection.transaction():
@@ -348,6 +401,7 @@ class PostgresWorkflowStore:
                 return execution
             if execution.status != "executing":
                 raise WorkflowError("execution_adapter_failed")
+            self._require_lease(execution, lease_owner, fencing_token, now)
             completed = execution.model_copy(
                 update={"status": "completed", "outcome": outcome, "completed_at": now}
             )
@@ -387,6 +441,8 @@ class PostgresWorkflowStore:
         execution_id: str,
         error_code: str,
         *,
+        lease_owner: str,
+        fencing_token: int,
         now: datetime,
     ) -> RemediationExecution:
         with self._connection() as connection, connection.transaction():
@@ -394,6 +450,7 @@ class PostgresWorkflowStore:
             self._lock_run(connection, execution.run_id)
             if execution.status != "executing":
                 return execution
+            self._require_lease(execution, lease_owner, fencing_token, now)
             failed = execution.model_copy(
                 update={"status": "failed", "error_code": error_code, "completed_at": now}
             )
@@ -427,11 +484,38 @@ class PostgresWorkflowStore:
             )
         return failed
 
+    def renew_execution_lease(
+        self,
+        execution_id: str,
+        *,
+        lease_owner: str,
+        fencing_token: int,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> RemediationExecution:
+        if lease_expires_at <= now:
+            raise ValueError("renewed lease expiry must be in the future")
+        with self._connection() as connection, connection.transaction():
+            execution = self._locked_execution(connection, execution_id)
+            self._require_lease(execution, lease_owner, fencing_token, now)
+            connection.execute(
+                """
+                UPDATE remediation_executions
+                SET lease_expires_at = %s
+                WHERE execution_id = %s
+                """,
+                (lease_expires_at, execution_id),
+            )
+        return execution.model_copy(update={"lease_expires_at": lease_expires_at})
+
     def list_audit_events(self, run_id: str) -> list[AuditEvent]:
         with self._connection() as connection:
-            if connection.execute(
-                "SELECT run_id FROM investigation_runs WHERE run_id = %s", (run_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT run_id FROM investigation_runs WHERE run_id = %s", (run_id,)
+                ).fetchone()
+                is None
+            ):
                 raise WorkflowError("run_not_found")
             rows = connection.execute(
                 """
@@ -445,10 +529,28 @@ class PostgresWorkflowStore:
     def verify_audit_chain(self, run_id: str) -> bool:
         return verify_audit_events(self.list_audit_events(run_id))
 
+    def is_ready(self) -> bool:
+        with self._connection() as connection:
+            row = connection.execute("SELECT 1 AS ready").fetchone()
+        return row is not None and row["ready"] == 1
+
     @staticmethod
-    def _lock_run(
-        connection: Connection[dict[str, Any]], run_id: str
-    ) -> Mapping[str, Any] | None:
+    def _require_lease(
+        execution: RemediationExecution,
+        lease_owner: str,
+        fencing_token: int,
+        now: datetime,
+    ) -> None:
+        if (
+            execution.status != "executing"
+            or execution.lease_owner != lease_owner
+            or execution.fencing_token != fencing_token
+            or execution.lease_expires_at <= now
+        ):
+            raise WorkflowError("execution_lease_lost")
+
+    @staticmethod
+    def _lock_run(connection: Connection[dict[str, Any]], run_id: str) -> Mapping[str, Any] | None:
         return connection.execute(
             "SELECT run_id FROM investigation_runs WHERE run_id = %s FOR UPDATE",
             (run_id,),

@@ -105,9 +105,7 @@ class InMemoryWorkflowStore:
             )
             self._proposals[proposal_id] = updated
             event_type = (
-                "remediation.approved"
-                if decision.decision == "approve"
-                else "remediation.rejected"
+                "remediation.approved" if decision.decision == "approve" else "remediation.rejected"
             )
             self._append_event(
                 proposal.run_id,
@@ -118,9 +116,7 @@ class InMemoryWorkflowStore:
                     "plan_digest": proposal.plan_digest,
                     "reason": decision.reason,
                     "expires_at": (
-                        decision.expires_at.isoformat()
-                        if decision.expires_at is not None
-                        else None
+                        decision.expires_at.isoformat() if decision.expires_at is not None else None
                     ),
                 },
                 now,
@@ -133,6 +129,8 @@ class InMemoryWorkflowStore:
         *,
         idempotency_key: str,
         requested_by: Actor,
+        lease_owner: str,
+        lease_expires_at: datetime,
         now: datetime,
     ) -> ExecutionClaim:
         with self._lock:
@@ -142,7 +140,31 @@ class InMemoryWorkflowStore:
                 existing = self._executions[existing_id]
                 if existing.idempotency_key != idempotency_key:
                     raise WorkflowError("idempotency_key_conflict")
-                return ExecutionClaim(existing, claimed=False)
+                if existing.status != "executing" or existing.lease_expires_at > now:
+                    return ExecutionClaim(existing, claimed=False)
+                recovered = existing.model_copy(
+                    update={
+                        "requested_by": requested_by,
+                        "lease_owner": lease_owner,
+                        "lease_expires_at": lease_expires_at,
+                        "fencing_token": existing.fencing_token + 1,
+                        "attempt_count": existing.attempt_count + 1,
+                    }
+                )
+                self._executions[existing_id] = recovered
+                self._append_event(
+                    existing.run_id,
+                    "remediation.execution_recovered",
+                    requested_by,
+                    {
+                        "proposal_id": existing.proposal_id,
+                        "execution_id": existing.execution_id,
+                        "attempt_count": recovered.attempt_count,
+                        "fencing_token": recovered.fencing_token,
+                    },
+                    now,
+                )
+                return ExecutionClaim(recovered, claimed=True, recovered=True)
 
             approval = proposal.approval
             if proposal.status != "approved" or approval is None:
@@ -159,6 +181,10 @@ class InMemoryWorkflowStore:
                 idempotency_key=idempotency_key,
                 plan_digest=proposal.plan_digest,
                 requested_by=requested_by,
+                lease_owner=lease_owner,
+                lease_expires_at=lease_expires_at,
+                fencing_token=1,
+                attempt_count=1,
                 status="executing",
                 outcome=None,
                 error_code=None,
@@ -183,6 +209,8 @@ class InMemoryWorkflowStore:
                     "execution_id": execution.execution_id,
                     "idempotency_key": idempotency_key,
                     "plan_digest": proposal.plan_digest,
+                    "attempt_count": execution.attempt_count,
+                    "fencing_token": execution.fencing_token,
                 },
                 now,
             )
@@ -193,6 +221,8 @@ class InMemoryWorkflowStore:
         execution_id: str,
         outcome: RemediationOutcome,
         *,
+        lease_owner: str,
+        fencing_token: int,
         now: datetime,
     ) -> RemediationExecution:
         with self._lock:
@@ -201,6 +231,7 @@ class InMemoryWorkflowStore:
                 return execution
             if execution.status != "executing":
                 raise WorkflowError("execution_adapter_failed")
+            self._require_lease(execution, lease_owner, fencing_token, now)
             completed = execution.model_copy(
                 update={"status": "completed", "outcome": outcome, "completed_at": now}
             )
@@ -232,12 +263,15 @@ class InMemoryWorkflowStore:
         execution_id: str,
         error_code: str,
         *,
+        lease_owner: str,
+        fencing_token: int,
         now: datetime,
     ) -> RemediationExecution:
         with self._lock:
             execution = self._executions[execution_id]
             if execution.status != "executing":
                 return execution
+            self._require_lease(execution, lease_owner, fencing_token, now)
             failed = execution.model_copy(
                 update={"status": "failed", "error_code": error_code, "completed_at": now}
             )
@@ -263,6 +297,24 @@ class InMemoryWorkflowStore:
             )
             return failed
 
+    def renew_execution_lease(
+        self,
+        execution_id: str,
+        *,
+        lease_owner: str,
+        fencing_token: int,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> RemediationExecution:
+        with self._lock:
+            execution = self._executions[execution_id]
+            self._require_lease(execution, lease_owner, fencing_token, now)
+            if lease_expires_at <= now:
+                raise ValueError("renewed lease expiry must be in the future")
+            renewed = execution.model_copy(update={"lease_expires_at": lease_expires_at})
+            self._executions[execution_id] = renewed
+            return renewed
+
     def list_audit_events(self, run_id: str) -> list[AuditEvent]:
         with self._lock:
             self.get_run(run_id)
@@ -273,6 +325,24 @@ class InMemoryWorkflowStore:
 
     def close(self) -> None:
         return None
+
+    def is_ready(self) -> bool:
+        return True
+
+    @staticmethod
+    def _require_lease(
+        execution: RemediationExecution,
+        lease_owner: str,
+        fencing_token: int,
+        now: datetime,
+    ) -> None:
+        if (
+            execution.status != "executing"
+            or execution.lease_owner != lease_owner
+            or execution.fencing_token != fencing_token
+            or execution.lease_expires_at <= now
+        ):
+            raise WorkflowError("execution_lease_lost")
 
     def _append_event(
         self,

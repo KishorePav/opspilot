@@ -60,3 +60,22 @@ jobs:
         with:
           name: pgvector-benchmark
           path: artifacts/benchmarks/pgvector-ci.json
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag opspilot:${{ github.sha }} .
+      - run: >-
+          docker run --detach --name opspilot-smoke --publish 8080:8080
+          opspilot:${{ github.sha }}
+      - run: |
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://localhost:8080/livez; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs opspilot-smoke
+          exit 1

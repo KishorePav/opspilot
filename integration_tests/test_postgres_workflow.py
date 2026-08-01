@@ -30,6 +30,7 @@ from opspilot.workflow.service import RemediationWorkflowService
 
 _DATABASE_URL = os.getenv("OPSPILOT_TEST_DATABASE_URL")
 _EVIDENCE_ID = "log:postgres-workflow-restart"
+_TENANT_ID = "tenant-alpha"
 _NOW = datetime(2026, 8, 2, 10, 0, tzinfo=UTC)
 
 
@@ -161,6 +162,8 @@ class PostgresWorkflowTests(unittest.TestCase):
             self.store,
             self.executor,
             approval_ttl=timedelta(minutes=10),
+            execution_lease_ttl=timedelta(seconds=10),
+            worker_id="postgres-worker-a",
             clock=lambda: _NOW,
         )
         self.operator = _actor("operator@example.com")
@@ -171,11 +174,14 @@ class PostgresWorkflowTests(unittest.TestCase):
         self.service.close()
 
     def _approved_proposal(self) -> tuple[str, str]:
-        run = self.service.create_investigation(_request(), created_by=self.operator)
+        run = self.service.create_investigation(
+            _request(), created_by=self.operator, tenant_id=_TENANT_ID
+        )
         proposal = self.service.create_proposal(
             run.run_id,
             _action(),
             created_by=self.operator,
+            tenant_id=_TENANT_ID,
         )
         self.service.decide_proposal(
             proposal.proposal_id,
@@ -183,6 +189,7 @@ class PostgresWorkflowTests(unittest.TestCase):
             expected_plan_digest=proposal.plan_digest,
             decided_by=self.approver,
             reason="The exact digest and synthetic dry run were reviewed.",
+            tenant_id=_TENANT_ID,
         )
         return run.run_id, proposal.proposal_id
 
@@ -192,6 +199,7 @@ class PostgresWorkflowTests(unittest.TestCase):
             proposal_id,
             idempotency_key="postgres-restart-orders-101",
             requested_by=self.runner,
+            tenant_id=_TENANT_ID,
         )
         self.service.close()
 
@@ -207,19 +215,28 @@ class PostgresWorkflowTests(unittest.TestCase):
             reopened_store,
             reopened_executor,
             approval_ttl=timedelta(minutes=10),
+            execution_lease_ttl=timedelta(seconds=10),
+            worker_id="postgres-worker-b",
             clock=lambda: _NOW,
         )
         replay = self.service.execute_proposal(
             proposal_id,
             idempotency_key="postgres-restart-orders-101",
             requested_by=self.runner,
+            tenant_id=_TENANT_ID,
         )
 
         self.assertEqual(first, replay)
         self.assertEqual(0, reopened_executor.execution_count)
-        self.assertEqual("completed", self.service.get_proposal(proposal_id).status)
-        self.assertEqual(run_id, self.service.get_investigation(run_id).run_id)
-        self.assertEqual(5, len(self.service.audit_events(run_id)))
+        self.assertEqual(
+            "completed",
+            self.service.get_proposal(proposal_id, tenant_id=_TENANT_ID).status,
+        )
+        self.assertEqual(
+            run_id,
+            self.service.get_investigation(run_id, tenant_id=_TENANT_ID).run_id,
+        )
+        self.assertEqual(5, len(self.service.audit_events(run_id, tenant_id=_TENANT_ID)))
 
     def test_conflicting_idempotency_key_is_rejected(self) -> None:
         _, proposal_id = self._approved_proposal()
@@ -227,20 +244,25 @@ class PostgresWorkflowTests(unittest.TestCase):
             proposal_id,
             idempotency_key="postgres-restart-orders-101",
             requested_by=self.runner,
+            tenant_id=_TENANT_ID,
         )
         with self.assertRaisesRegex(WorkflowError, "idempotency_key_conflict"):
             self.service.execute_proposal(
                 proposal_id,
                 idempotency_key="different-restart-key-101",
                 requested_by=self.runner,
+                tenant_id=_TENANT_ID,
             )
 
     def test_database_plan_tampering_is_detected_before_approval(self) -> None:
-        run = self.service.create_investigation(_request(), created_by=self.operator)
+        run = self.service.create_investigation(
+            _request(), created_by=self.operator, tenant_id=_TENANT_ID
+        )
         proposal = self.service.create_proposal(
             run.run_id,
             _action(),
             created_by=self.operator,
+            tenant_id=_TENANT_ID,
         )
         assert _DATABASE_URL is not None
         with psycopg.connect(_DATABASE_URL) as connection:
@@ -259,16 +281,60 @@ class PostgresWorkflowTests(unittest.TestCase):
                 expected_plan_digest=proposal.plan_digest,
                 decided_by=self.approver,
                 reason="A modified plan must not be approved.",
+                tenant_id=_TENANT_ID,
             )
 
     def test_audit_rows_are_database_immutable(self) -> None:
-        run = self.service.create_investigation(_request(), created_by=self.operator)
+        run = self.service.create_investigation(
+            _request(), created_by=self.operator, tenant_id=_TENANT_ID
+        )
         assert _DATABASE_URL is not None
         with self.assertRaises(psycopg.Error), psycopg.connect(_DATABASE_URL) as connection:
             connection.execute(
                 "UPDATE workflow_audit_events SET payload = '{}' WHERE run_id = %s",
                 (run.run_id,),
             )
+
+    def test_expired_claim_recovery_fences_the_stale_database_worker(self) -> None:
+        run_id, proposal_id = self._approved_proposal()
+        first = self.store.claim_execution(
+            proposal_id,
+            idempotency_key="postgres-lease-recovery-101",
+            requested_by=self.runner,
+            lease_owner="postgres-worker-a",
+            lease_expires_at=_NOW + timedelta(seconds=5),
+            now=_NOW,
+        )
+        recovered_at = _NOW + timedelta(seconds=6)
+        recovered = self.store.claim_execution(
+            proposal_id,
+            idempotency_key="postgres-lease-recovery-101",
+            requested_by=self.runner,
+            lease_owner="postgres-worker-b",
+            lease_expires_at=recovered_at + timedelta(seconds=10),
+            now=recovered_at,
+        )
+        outcome = self.executor.execute(_action(), idempotency_key="postgres-lease-recovery-101")
+
+        self.assertTrue(recovered.recovered)
+        self.assertEqual(2, recovered.execution.fencing_token)
+        with self.assertRaisesRegex(WorkflowError, "execution_lease_lost"):
+            self.store.complete_execution(
+                first.execution.execution_id,
+                outcome,
+                lease_owner="postgres-worker-a",
+                fencing_token=first.execution.fencing_token,
+                now=recovered_at,
+            )
+        completed = self.store.complete_execution(
+            recovered.execution.execution_id,
+            outcome,
+            lease_owner="postgres-worker-b",
+            fencing_token=recovered.execution.fencing_token,
+            now=recovered_at,
+        )
+        self.assertEqual("completed", completed.status)
+        self.assertEqual(6, len(self.service.audit_events(run_id, tenant_id=_TENANT_ID)))
 
 
 if __name__ == "__main__":

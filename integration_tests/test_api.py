@@ -7,10 +7,13 @@ from httpx import ASGITransport, AsyncClient
 from opspilot.adapters.synthetic_remediation import SyntheticRemediationExecutor
 from opspilot.api import (
     create_app,
+    get_authenticator,
     get_investigator,
+    get_observability,
     get_retriever,
     get_workflow_service,
 )
+from opspilot.auth import Principal, StaticTokenAuthenticator
 from opspilot.investigation.models import (
     CitedClaim,
     DiagnosisReport,
@@ -22,11 +25,33 @@ from opspilot.investigation.models import (
     ToolTrace,
 )
 from opspilot.investigation.orchestrator import IncidentInvestigator
+from opspilot.observability import RecordingObservability
 from opspilot.tools.base import ToolSpec
 from opspilot.workflow.memory import InMemoryWorkflowStore
 from opspilot.workflow.service import RemediationWorkflowService
 
 _WORKFLOW_EVIDENCE_ID = "log:api-workflow-restart"
+
+
+def _principal(
+    subject: str,
+    *roles: str,
+    actor_type: str = "human",
+    tenant_id: str = "tenant-alpha",
+) -> Principal:
+    return Principal.model_validate(
+        {
+            "subject": subject,
+            "display_name": subject,
+            "tenant_id": tenant_id,
+            "actor_type": actor_type,
+            "roles": list(roles),
+        }
+    )
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 class WorkflowEvidenceTool:
@@ -156,7 +181,41 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         get_retriever.cache_clear()
         get_investigator.cache_clear()
         get_workflow_service.cache_clear()
+        get_authenticator.cache_clear()
+        get_observability.cache_clear()
         self.app = create_app()
+        self.observability = RecordingObservability()
+        authenticator = StaticTokenAuthenticator(
+            {
+                "operator": _principal(
+                    "operator@example.com", "investigator", "remediation_proposer"
+                ),
+                "approver": _principal("approver@example.com", "remediation_approver"),
+                "runner": _principal(
+                    "workflow-runner", "remediation_executor", actor_type="service"
+                ),
+                "auditor": _principal("auditor@example.com", "auditor"),
+                "service-approver": _principal(
+                    "automated-approver",
+                    "remediation_approver",
+                    actor_type="service",
+                ),
+                "other-tenant": _principal(
+                    "other@example.com",
+                    "auditor",
+                    tenant_id="tenant-beta",
+                ),
+            }
+        )
+
+        def override_authenticator() -> StaticTokenAuthenticator:
+            return authenticator
+
+        def override_observability() -> RecordingObservability:
+            return self.observability
+
+        self.app.dependency_overrides[get_authenticator] = override_authenticator
+        self.app.dependency_overrides[get_observability] = override_observability
         investigator = IncidentInvestigator(InsufficientEvidenceGateway(), [])
 
         def override_investigator() -> IncidentInvestigator:
@@ -168,6 +227,8 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
             InMemoryWorkflowStore(),
             SyntheticRemediationExecutor(),
             approval_ttl=timedelta(minutes=10),
+            worker_id="api-worker",
+            observability=self.observability,
             clock=lambda: datetime(2026, 8, 2, 10, 0, tzinfo=UTC),
         )
 
@@ -186,16 +247,34 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         get_investigator.cache_clear()
         get_retriever.cache_clear()
         get_workflow_service.cache_clear()
+        get_authenticator.cache_clear()
+        get_observability.cache_clear()
 
     async def test_health_endpoint(self) -> None:
         response = await self.client.get("/health")
         self.assertEqual(200, response.status_code)
         self.assertEqual({"status": "ok"}, response.json())
 
+    async def test_openapi_contract_requires_bearer_auth_and_has_no_actor_inputs(self) -> None:
+        schema = self.app.openapi()
+        durable_schema = schema["components"]["schemas"]["DurableInvestigationRequest"]
+        proposal_schema = schema["components"]["schemas"]["ProposalRequest"]
+        decision_schema = schema["components"]["schemas"]["ProposalDecisionRequest"]
+        execution_schema = schema["components"]["schemas"]["ExecutionRequest"]
+
+        self.assertEqual("0.6.0", schema["info"]["version"])
+        self.assertIn("HTTPBearer", schema["components"]["securitySchemes"])
+        self.assertEqual({"incident"}, set(durable_schema["properties"]))
+        self.assertEqual({"action"}, set(proposal_schema["properties"]))
+        self.assertNotIn("decided_by", decision_schema["properties"])
+        self.assertNotIn("requested_by", execution_schema["properties"])
+        self.assertTrue(schema["paths"]["/v1/retrieve"]["post"]["security"])
+
     async def test_retrieval_endpoint_returns_cited_evidence(self) -> None:
         response = await self.client.post(
             "/v1/retrieve",
             json={"query": "Dataflow cannot act as service account", "top_k": 3},
+            headers=_auth("operator"),
         )
 
         self.assertEqual(200, response.status_code)
@@ -209,6 +288,7 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(
             "/v1/retrieve",
             json={"query": "database latency", "filters": {"unsafe key": "value"}},
+            headers=_auth("operator"),
         )
         self.assertEqual(422, response.status_code)
 
@@ -219,14 +299,11 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
                 "incident_id": "inc-dataflow-042",
                 "summary": "Workers cannot start",
                 "environment": "synthetic",
-                "started_at": datetime.fromisoformat(
-                    "2026-08-01T10:00:00+00:00"
-                ).isoformat(),
-                "ended_at": datetime.fromisoformat(
-                    "2026-08-01T10:15:00+00:00"
-                ).isoformat(),
+                "started_at": datetime.fromisoformat("2026-08-01T10:00:00+00:00").isoformat(),
+                "ended_at": datetime.fromisoformat("2026-08-01T10:15:00+00:00").isoformat(),
                 "services": ["dataflow-worker"],
             },
+            headers=_auth("operator"),
         )
 
         self.assertEqual(200, response.status_code)
@@ -255,6 +332,7 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
                 "ended_at": "2026-08-01T10:15:00Z",
                 "services": ["dataflow-worker"],
             },
+            headers=_auth("operator"),
         )
 
         self.assertEqual(503, response.status_code)
@@ -269,21 +347,6 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_durable_approval_api_is_digest_bound_and_idempotent(self) -> None:
-        operator = {
-            "actor_type": "human",
-            "actor_id": "operator@example.com",
-            "display_name": "Operator",
-        }
-        approver = {
-            "actor_type": "human",
-            "actor_id": "approver@example.com",
-            "display_name": "Approver",
-        }
-        runner = {
-            "actor_type": "service",
-            "actor_id": "workflow-runner",
-            "display_name": "Workflow Runner",
-        }
         created = await self.client.post(
             "/v1/investigations",
             json={
@@ -295,8 +358,8 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
                     "ended_at": "2026-08-02T10:00:00Z",
                     "services": ["orders"],
                 },
-                "created_by": operator,
             },
+            headers=_auth("operator"),
         )
         self.assertEqual(201, created.status_code)
         run_id = created.json()["run_id"]
@@ -312,8 +375,8 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
                     "reason": "Restart the stuck deployment after reviewing its evidence.",
                     "evidence_ids": [_WORKFLOW_EVIDENCE_ID],
                 },
-                "created_by": operator,
             },
+            headers=_auth("operator"),
         )
         self.assertEqual(201, proposed.status_code)
         proposal = proposed.json()
@@ -324,51 +387,119 @@ class RetrievalApiTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "decision": "approve",
                 "expected_plan_digest": proposal["plan_digest"],
-                "decided_by": approver,
                 "reason": "The exact plan digest and dry run were reviewed.",
             },
+            headers=_auth("approver"),
         )
         self.assertEqual(200, approved.status_code)
         self.assertEqual("approved", approved.json()["status"])
 
-        execution_body = {
-            "idempotency_key": "api-orders-restart-101",
-            "requested_by": runner,
-        }
+        execution_body = {"idempotency_key": "api-orders-restart-101"}
         first = await self.client.post(
             f"/v1/remediation-proposals/{proposal['proposal_id']}/executions",
             json=execution_body,
+            headers=_auth("runner"),
         )
         replay = await self.client.post(
             f"/v1/remediation-proposals/{proposal['proposal_id']}/executions",
             json=execution_body,
+            headers=_auth("runner"),
         )
         self.assertEqual(200, first.status_code)
         self.assertEqual(first.json(), replay.json())
         self.assertEqual("completed", first.json()["status"])
         self.assertTrue(first.json()["outcome"]["simulated"])
 
-        audit = await self.client.get(f"/v1/investigations/{run_id}/audit-events")
+        audit = await self.client.get(
+            f"/v1/investigations/{run_id}/audit-events",
+            headers=_auth("auditor"),
+        )
         self.assertEqual(200, audit.status_code)
         self.assertTrue(audit.json()["verified"])
         self.assertEqual(5, len(audit.json()["events"]))
 
     async def test_non_human_approval_is_rejected(self) -> None:
+        created = await self.client.post(
+            "/v1/investigations",
+            json={
+                "incident": {
+                    "incident_id": "inc-service-approval-101",
+                    "summary": "Orders deployment is stuck",
+                    "environment": "synthetic",
+                    "started_at": "2026-08-02T09:45:00Z",
+                    "ended_at": "2026-08-02T10:00:00Z",
+                    "services": ["orders"],
+                }
+            },
+            headers=_auth("operator"),
+        )
+        run_id = created.json()["run_id"]
+        proposed = await self.client.post(
+            f"/v1/investigations/{run_id}/remediation-proposals",
+            json={
+                "action": {
+                    "action_type": "restart_deployment",
+                    "service": "orders",
+                    "environment": "synthetic",
+                    "deployment": "orders-api",
+                    "reason": "Restart only after a verified human reviews the plan.",
+                    "evidence_ids": [_WORKFLOW_EVIDENCE_ID],
+                }
+            },
+            headers=_auth("operator"),
+        )
+        proposal = proposed.json()
         response = await self.client.post(
-            "/v1/remediation-proposals/prop_00000000000000000000000000000000/decisions",
+            f"/v1/remediation-proposals/{proposal['proposal_id']}/decisions",
             json={
                 "decision": "approve",
-                "expected_plan_digest": "0" * 64,
-                "decided_by": {
-                    "actor_type": "service",
-                    "actor_id": "auto-approver",
-                    "display_name": "Automation",
-                },
+                "expected_plan_digest": proposal["plan_digest"],
                 "reason": "Automation cannot approve a remediation.",
             },
+            headers=_auth("service-approver"),
         )
         self.assertEqual(422, response.status_code)
         self.assertEqual("approval_actor_required", response.json()["detail"]["code"])
+
+    async def test_missing_token_and_wrong_role_fail_closed(self) -> None:
+        missing = await self.client.post(
+            "/v1/retrieve",
+            json={"query": "database latency"},
+        )
+        wrong_role = await self.client.post(
+            "/v1/retrieve",
+            json={"query": "database latency"},
+            headers=_auth("auditor"),
+        )
+
+        self.assertEqual(401, missing.status_code)
+        self.assertEqual("authentication_required", missing.json()["detail"]["code"])
+        self.assertEqual(403, wrong_role.status_code)
+        self.assertEqual("forbidden", wrong_role.json()["detail"]["code"])
+
+    async def test_tenant_scoping_hides_another_tenants_run(self) -> None:
+        created = await self.client.post(
+            "/v1/investigations",
+            json={
+                "incident": {
+                    "incident_id": "inc-tenant-scope-101",
+                    "summary": "Tenant-scoped synthetic incident",
+                    "environment": "synthetic",
+                    "started_at": "2026-08-02T09:45:00Z",
+                    "ended_at": "2026-08-02T10:00:00Z",
+                    "services": ["orders"],
+                }
+            },
+            headers=_auth("operator"),
+        )
+        run_id = created.json()["run_id"]
+        hidden = await self.client.get(
+            f"/v1/investigations/{run_id}/audit-events",
+            headers=_auth("other-tenant"),
+        )
+
+        self.assertEqual(404, hidden.status_code)
+        self.assertEqual("run_not_found", hidden.json()["detail"]["code"])
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ class WorkflowModel(BaseModel):
 
 class Actor(WorkflowModel):
     actor_type: ActorType
-    actor_id: str = Field(pattern=r"^[a-zA-Z0-9_.:@-]{3,128}$")
+    actor_id: str = Field(pattern=r"^[a-zA-Z0-9_.:@/-]{3,160}$")
     display_name: str = Field(min_length=1, max_length=160)
 
 
@@ -51,6 +51,7 @@ class InvestigationFailureSnapshot(WorkflowModel):
 
 class InvestigationRun(WorkflowModel):
     run_id: str = Field(pattern=r"^run_[a-f0-9]{32}$")
+    tenant_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{2,63}$")
     request: IncidentRequest
     status: RunStatus
     result: InvestigationResult | None
@@ -142,6 +143,10 @@ class RemediationExecution(WorkflowModel):
     idempotency_key: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{8,128}$")
     plan_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     requested_by: Actor
+    lease_owner: str = Field(pattern=r"^[a-zA-Z0-9_.:@-]{1,128}$", exclude=True)
+    lease_expires_at: datetime
+    fencing_token: int = Field(ge=1)
+    attempt_count: int = Field(ge=1)
     status: ExecutionStatus
     outcome: RemediationOutcome | None
     error_code: str | None
@@ -150,6 +155,8 @@ class RemediationExecution(WorkflowModel):
 
     @model_validator(mode="after")
     def validate_outcome(self) -> RemediationExecution:
+        if self.lease_expires_at.tzinfo is None:
+            raise ValueError("execution lease expiry must include a timezone")
         if self.status == "executing" and (
             self.outcome is not None or self.error_code is not None or self.completed_at is not None
         ):
