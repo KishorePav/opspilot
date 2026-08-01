@@ -18,7 +18,7 @@ def validate() -> dict[str, object]:
     assert paths == expected
     assert all("remediation" not in path for path in paths)
     assert "securitySchemes" not in schema.get("components", {})
-    assert schema["info"]["version"] == "0.7.0"
+    assert schema["info"]["version"] == "0.8.0"
 
     return {
         "mode": "synthetic-demo",

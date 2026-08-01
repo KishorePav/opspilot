@@ -15,3 +15,8 @@ failures from fail-closed policy outcomes without exposing raw exception text.
 The canonical code-to-category mapping lives in
 `src/opspilot/investigation/failures.py`. Adding an emitted error code without a
 registered definition is a contract error.
+
+For `model_gateway_failed`, live evaluation artifacts may also include a
+sanitized provider diagnostic: provider name, exception type, stable error
+code, HTTP status, and request ID. Raw exception messages, request bodies,
+prompts, evidence, and credentials are never included.

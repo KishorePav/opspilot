@@ -30,11 +30,11 @@ can submit a final Pydantic-validated report only after those calls. The
 orchestrator rejects unknown evidence IDs, out-of-scope affected services,
 duplicate calls, and exhausted budgets.
 
-The OpenAI Responses API is one adapter behind the investigation gateway. Each
-turn reconstructs its bounded state from the incident request, evidence ledger,
-and sanitized tool trace. This avoids provider-owned orchestration state and
-keeps deterministic gateways usable in CI, at the cost of repeating context on
-each live turn.
+Native OpenAI Responses API and Google Gen AI adapters sit behind the same
+investigation gateway. Each turn reconstructs its bounded state from the
+incident request, evidence ledger, and sanitized tool trace. This avoids
+provider-owned orchestration state and keeps deterministic gateways usable in
+CI, at the cost of repeating context on each live turn.
 
 Milestone 4 adds a replayable evaluation boundary around that unchanged agent.
 Each JSONL case contains an incident request, model-selected turns, token usage,
@@ -82,8 +82,8 @@ non-root execution, a read-only filesystem, dropped capabilities, resource
 bounds, disruption protection, scaling, and network-policy scaffolding.
 
 Milestone 7 separates model measurement from public demonstration. The live
-evaluator invokes the existing OpenAI gateway only after an explicit CLI
-confirmation and runtime credential check. Versioned synthetic inputs pass
+evaluator invokes an explicitly selected provider gateway only after a CLI
+confirmation and matching runtime credential check. Versioned synthetic inputs pass
 through the same investigator and deterministic graders, with per-call output
 limits, provider timeout, no SDK retries, and a cumulative token fence. Its
 artifact identifies the exact dataset bytes and observed provider model; cost
@@ -96,6 +96,14 @@ gateway into its request path and exposes no arbitrary incident input,
 authentication bypass for `/v1`, workflow store, or executor. This makes the
 demo useful for inspection without turning a portfolio URL into a funded model
 proxy or side-effect surface.
+
+Milestone 8 makes the live boundary provider-neutral in practice. The OpenAI
+and Gemini adapters translate only tool declarations, function-call results,
+and usage accounting; the orchestrator still owns scope, duplicate detection,
+evidence, citations, budgets, and terminal validation. Gemini automatic
+function execution is disabled. Provider/model mismatches fail before a client
+is constructed, and failed calls retain only bounded diagnostics suitable for
+the evaluation artifact—never raw exception text, prompts, or credentials.
 
 ## Component responsibilities
 

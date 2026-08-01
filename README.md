@@ -11,7 +11,7 @@ client deployment.
 
 ## Current status
 
-**Milestone 7 — controlled live evaluation and synthetic public demo.**
+**Milestone 8 — provider-neutral live evaluation with native OpenAI and Gemini adapters.**
 
 The current slice provides:
 
@@ -30,7 +30,8 @@ The current slice provides:
 - Pydantic-validated diagnoses with ranked hypotheses and cited root causes;
 - evidence-ledger validation that rejects invented citations;
 - scope, duplicate-call, round, tool-call, evidence, output-token, and total-token budgets;
-- a Responses API adapter with strict function schemas;
+- native OpenAI Responses API and Google Gen AI adapters behind one gateway;
+- provider/model compatibility checks before any live request;
 - versioned agent cases that replay successful and fail-closed investigations;
 - deterministic trace graders for outcome, tools, evidence, citations, safety,
   and budgets;
@@ -60,6 +61,8 @@ The current slice provides:
 - an opt-in live-model evaluation command and manual protected workflow;
 - two versioned live synthetic cases with model, trace, citation, latency, and
   actual-token artifacts;
+- sanitized provider failure diagnostics with provider, error type/code, HTTP
+  status, and request ID but no exception text or credential data;
 - a separate allowlisted synthetic demo app with no arbitrary prompt,
   credential, database, model, or remediation surface;
 - a dedicated demo container target validated through hosted smoke tests;
@@ -191,20 +194,23 @@ claim. See [the benchmark contract](docs/benchmarks/pgvector.md).
 ## Run the investigator
 
 The default configuration disables live generation so offline commands never
-consume API credits accidentally. To enable the OpenAI adapter, configure the
-provider and model in the server environment, then start the API:
+consume API quota or credits accidentally. Configure one explicit provider and
+its native model before starting the API. For the Gemini free-tier path:
 
 ```bash
-export OPSPILOT_INVESTIGATION_PROVIDER=openai
-export OPSPILOT_INVESTIGATION_MODEL=gpt-5.6
+export GEMINI_API_KEY='set-outside-the-repository'
+export OPSPILOT_INVESTIGATION_PROVIDER=gemini
+export OPSPILOT_INVESTIGATION_MODEL=gemini-3.6-flash
 export OPSPILOT_INVESTIGATION_REASONING_EFFORT=low
 export OPSPILOT_INVESTIGATION_MAX_OUTPUT_TOKENS=4096
 export OPSPILOT_INVESTIGATION_MAX_TOTAL_TOKENS=20000
 uvicorn opspilot.main:app --reload
 ```
 
-The OpenAI SDK reads its credential from the server environment. Never place a
-key in this repository. Submit a bounded synthetic investigation:
+OpenAI remains available with `OPSPILOT_INVESTIGATION_PROVIDER=openai`, an
+OpenAI-native model, and `OPENAI_API_KEY`. Provider/model mismatches fail before
+a request. Never place either provider key in this repository. Submit a bounded
+synthetic investigation:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/investigate \
@@ -231,20 +237,22 @@ server startup. It requires an explicit acknowledgement and reads the API key
 only from the process environment:
 
 ```bash
-export OPENAI_API_KEY='set-outside-the-repository'
+export GEMINI_API_KEY='set-outside-the-repository'
 python scripts/run_live_agent_eval.py \
   --confirm-live-api \
-  --model gpt-5.6 \
+  --provider gemini \
+  --model gemini-3.6-flash \
   --max-cases 1
 ```
 
 The default run is capped at one versioned synthetic case, six model rounds,
 eight read-only tool calls, 12,000 total tokens, 4,096 output tokens per call,
 a 30-second provider timeout, and zero SDK retries. It writes
-`artifacts/evaluations/live-agent-eval.json` with the dataset digest, requested
-and observed models, latency, tool trace, citations, actual token usage, and
-grades. Cost remains `null` unless all three rates and a price-card version are
-supplied explicitly; OpsPilot never guesses current pricing.
+`artifacts/evaluations/live-agent-eval.json` with the provider, dataset digest,
+requested and observed models, latency, tool trace, citations, actual token
+usage, grades, and sanitized provider diagnostics when a call fails. Cost
+remains `null` unless all three rates and a price-card version are supplied
+explicitly; OpsPilot never guesses current pricing.
 
 The GitHub workflow `Controlled live-model evaluation` exposes the same command
 only through `workflow_dispatch` and the `live-evaluation` environment. See the
@@ -300,21 +308,21 @@ human/service type, tenant, and roles are derived from the verified token.
 Build and smoke-test the image locally:
 
 ```bash
-docker build -t opspilot:0.7.0 .
-docker run --rm -p 8080:8080 opspilot:0.7.0
+docker build -t opspilot:0.8.0 .
+docker run --rm -p 8080:8080 opspilot:0.8.0
 curl --fail http://127.0.0.1:8080/livez
 
-docker build --target demo -t opspilot-demo:0.7.0 .
-docker run --rm -p 8081:8080 opspilot-demo:0.7.0
+docker build --target demo -t opspilot-demo:0.8.0 .
+docker run --rm -p 8081:8080 opspilot-demo:0.8.0
 curl --fail http://127.0.0.1:8081/api/scenarios
 ```
 
 The Kubernetes base expects an externally managed `opspilot-runtime` Secret
-containing `DATABASE_URL`, `OPENAI_API_KEY`, `OPSPILOT_AUTH_JWKS_URL`,
+containing `DATABASE_URL`, the selected provider key, `OPSPILOT_AUTH_JWKS_URL`,
 `OPSPILOT_AUTH_ISSUER`, and `OPSPILOT_AUTH_AUDIENCE`. No secret manifest or
 credential is checked in. Render it only after replacing the example image and
-reviewing the cluster-specific ingress, database, identity-provider, OpenAI,
-and trace-backend egress paths:
+reviewing the cluster-specific ingress, database, identity-provider, model
+provider, and trace-backend egress paths:
 
 ```bash
 kubectl kustomize deploy/kubernetes/base
@@ -403,4 +411,6 @@ for the durable approval and idempotency decision and
 [ADR 0006](docs/adr/0006-authenticated-fenced-production-operations.md) for
 identity, tenancy, leases, and telemetry. See
 [ADR 0007](docs/adr/0007-controlled-live-evaluation-and-demo.md) for the
-credential and public-demo separation.
+credential and public-demo separation, and
+[ADR 0008](docs/adr/0008-native-provider-gateways.md) for native OpenAI/Gemini
+routing and diagnostic boundaries.

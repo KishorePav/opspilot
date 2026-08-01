@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from opspilot.investigation.gateway import ProviderDiagnostic
 from opspilot.investigation.models import EvidenceItem, ToolTrace, UsageSummary
 
 FailureCategory = Literal[
@@ -97,6 +98,13 @@ class InvestigationFailedError(RuntimeError):
         self.trace: tuple[ToolTrace, ...] = ()
         self.evidence: tuple[EvidenceItem, ...] = ()
         self.usage: UsageSummary | None = None
+        self.provider_diagnostic: ProviderDiagnostic | None = None
+
+    def attach_provider_diagnostic(
+        self,
+        diagnostic: ProviderDiagnostic | None,
+    ) -> None:
+        self.provider_diagnostic = diagnostic
 
     def attach_context(
         self,

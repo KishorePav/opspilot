@@ -108,8 +108,8 @@ prove:
 
 - normal tests, pull requests, and container startup cannot trigger a provider
   request or consume credits;
-- the live runner requires both `--confirm-live-api` and a runtime-only
-  `OPENAI_API_KEY`;
+- the live runner requires `--confirm-live-api`, an explicit provider, and that
+  provider's runtime-only key;
 - every live case bounds rounds, tools, evidence, total tokens, per-call output,
   timeout, retries, and selected-case count;
 - the artifact records a dataset digest, requested and observed model names,
@@ -126,3 +126,23 @@ These checks establish a safe path for collecting live evidence and a
 deployable portfolio demonstration. They do not themselves establish a
 live-model pass rate. That claim requires an artifact from the protected manual
 workflow tied to a commit and model identifier.
+
+## Milestone 8 acceptance evidence
+
+The native-provider milestone is accepted when automated checks prove:
+
+- OpenAI and Gemini both implement the same investigation gateway protocol;
+- provider/model mismatches fail before any provider call;
+- Gemini automatic function execution is disabled and forced calls are limited
+  to the same typed read-only tools plus the structured report submission;
+- Gemini schemas are normalized to its documented JSON Schema subset while the
+  returned values still pass the same Pydantic and citation validation;
+- Gemini usage metadata maps into the existing input, cached-input, output,
+  reasoning, total-token, and cumulative-budget contracts;
+- provider failures export only bounded provider/type/code/status/request-ID
+  diagnostics, with no raw exception message or credential value;
+- ordinary CI and the synthetic demo remain credential-free.
+
+These checks establish provider portability and a safe route to a free-tier
+baseline. They do not establish a successful live diagnosis until the protected
+workflow publishes a passing commit- and dataset-bound artifact.

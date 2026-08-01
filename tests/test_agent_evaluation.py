@@ -1,25 +1,60 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 
 from opspilot.corpus import load_markdown_documents
 from opspilot.evaluation.agent import (
     AgentEvaluationRegressionError,
+    AgentEvaluator,
     enforce_thresholds,
     evaluate_cases,
     load_agent_eval_cases,
     load_thresholds,
 )
+from opspilot.investigation.gateway import (
+    InvestigationModelGateway,
+    ModelGatewayError,
+    ProviderDiagnostic,
+)
+from opspilot.investigation.models import (
+    EvidenceItem,
+    IncidentRequest,
+    ModelTurn,
+    ToolTrace,
+)
 from opspilot.retrieval.embedding import HashEmbeddingProvider
 from opspilot.retrieval.service import HybridRetriever
-from opspilot.tools.base import ReadOnlyTool
+from opspilot.tools.base import ReadOnlyTool, ToolSpec
 from opspilot.tools.operational import OperationalFixtureStore, build_operational_tools
 from opspilot.tools.retrieval import RunbookSearchTool
 
 _DATASET = Path("evals/investigation_cases.jsonl")
 _THRESHOLDS = Path("evals/agent_thresholds.json")
+
+
+class DiagnosticFailureGateway(InvestigationModelGateway):
+    def next_turn(
+        self,
+        request: IncidentRequest,
+        *,
+        evidence: Sequence[EvidenceItem],
+        trace: Sequence[ToolTrace],
+        tools: Sequence[ToolSpec],
+    ) -> ModelTurn:
+        del request, evidence, trace, tools
+        raise ModelGatewayError(
+            "provider message is intentionally not exported",
+            diagnostic=ProviderDiagnostic(
+                provider="gemini",
+                error_type="ClientError",
+                error_code="RESOURCE_EXHAUSTED",
+                http_status=429,
+                request_id="request-123",
+            ),
+        )
 
 
 class AgentEvaluationTests(unittest.TestCase):
@@ -89,6 +124,24 @@ class AgentEvaluationTests(unittest.TestCase):
             AgentEvaluationRegressionError, "total_tokens"
         ):
             enforce_thresholds(report, regressed)
+
+    def test_provider_diagnostic_is_recorded_without_exception_text(self) -> None:
+        case = load_agent_eval_cases(_DATASET)[0]
+
+        result = AgentEvaluator(self.tools).evaluate_gateway(
+            case_id=case.case_id,
+            request=case.request,
+            expected=case.expected,
+            budgets=case.budgets,
+            gateway=DiagnosticFailureGateway(),
+        )
+
+        diagnostic = result.provider_diagnostic
+        assert diagnostic is not None
+        self.assertEqual("gemini", diagnostic.provider)
+        self.assertEqual("RESOURCE_EXHAUSTED", diagnostic.error_code)
+        self.assertEqual(429, diagnostic.http_status)
+        self.assertNotIn("provider message", result.model_dump_json())
 
 
 if __name__ == "__main__":
